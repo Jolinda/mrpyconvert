@@ -1,2 +1,3 @@
-# py2bids
-Wrapper for dcm2niix dicom to bids conversion
+# MrPyConvert
+Python library dicom to bids conversion
+Requires dcm2niix
