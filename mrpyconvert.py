@@ -31,6 +31,12 @@ suffixes['func'] = ['bold', 'cbv', 'phase', 'sbref', 'events', 'physio', 'stim']
 subject_pattern = re.compile('(.*)_([0-9]{8})(.*)')    
 series_pattern = re.compile('.*Series_([0-9]*)_(.*)')
 
+def IsDicom(filename):
+	try:
+		pydicom.dcmread(filename)
+	except InvalidDicomError:
+		return False
+	return True
 
 def GetSeriesNames(directory):
 	return set([re.match(series_pattern, x[0]).group(2) for x in os.walk(directory) if 'Series' in x[0]])
@@ -166,8 +172,10 @@ def AppendParticipant(subjectdir, bidsdir):
 
 	# get any dicom file
 	dcmfile = next(x for x in glob.glob(os.path.join(subjectdir,
-		'Series*', '*.dcm')))
+		'Series*', '*')) if IsDicom(x))
+	
 	ds = pydicom.dcmread(dcmfile)
+	
 
 	with open(part_file, 'a') as tsvfile:
 		writer = csv.DictWriter(tsvfile, fieldnames, dialect='excel-tab', 
