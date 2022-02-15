@@ -193,7 +193,7 @@ def Convert(dicomdir, bidsdir, bids_dict, slurm = False, participant_file = True
 	subjectdirs = [x[0] for x in os.walk(dicomdir) if subject_pattern.match(os.path.basename(x[0].strip('/')))]
 	
 	if not subjectdirs:
-		raise ValueError('Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need to run dicom2bids.SortDicoms({}) first.'.format(dicomdir))
+		raise ValueError('Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need to run mrpyconvert.SortDicoms({}) first.'.format(dicomdir))
 
 	if not os.path.exists(bidsdir):
 		os.makedirs(bidsdir)
@@ -317,8 +317,8 @@ lcni_corrections = {'InstitutionName':'University of Oregon', 'InstitutionalDepa
 def SortDicoms(input_dir, output_dir, overwrite = False, preview = False, slurm = False, account = None):
 
 	if slurm:
-		command = 'import dicom2bids\n'
-		command += 'dicom2bids.SortDicoms("{}","{}", overwrite = {}, preview = {}, slurm = False)'.format(input_dir, output_dir, overwrite, preview)
+		command = 'import mrpyconvert\n'
+		command += 'mrpyconvert.SortDicoms("{}","{}", overwrite = {}, preview = {}, slurm = False)'.format(input_dir, output_dir, overwrite, preview)
 
 		import slurmpy
 		filename = tempfile.NamedTemporaryFile().name
