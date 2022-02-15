@@ -8,6 +8,7 @@ import shutil
 import pwd
 import getpass
 import csv
+import pathlib
 
 import pydicom
 
@@ -39,7 +40,8 @@ def IsDicom(filename):
 	return True
 
 def GetSeriesNames(directory):
-	return set([re.match(series_pattern, x[0]).group(2) for x in os.walk(directory) if 'Series' in x[0]])
+#	return set([re.match(series_pattern, x[0]).group(2) for x in os.walk(directory) if 'Series' in x[0]])
+	return set([re.match(series_pattern, x.name).group(2) for x in pathlib.Path(directory).rglob('Series*')])
 
 def GetSubjectName(directory):
 	name = re.search(subject_pattern, os.path.basename(directory.strip('/'))).group(1)
@@ -211,6 +213,8 @@ def Convert(dicomdir, bidsdir, bids_dict, slurm = False, participant_file = True
 		command = command_base + GenerateCSCommand(subjectdir = subjectdir, bidsdir = bidsdir, bids_dict = bids_dict,
 			json_mod = json_mod, dcm2niix_flags = dcm2niix_flags)
 
+		#print(command)
+
 		if slurm:
 			import slurmpy
 			job = slurmpy.SlurmJob(jobname = 'convert', command = command, account = account)
@@ -360,3 +364,14 @@ def SortDicoms(input_dir, output_dir, overwrite = False, preview = False, slurm 
 		print('One or more files already existing and not moved')
 
 
+def TestConvert(dicomdir, bidsdir, bids_dict, slurm = False, participant_file = True, description_file = True,
+	json_mod = None, dcm2niix_flags = '', throttle = False, account = None, 
+	lmod = ['dcm2niix', 'jq']):
+
+	subjectdirs = [x[0] for x in os.walk(dicomdir) if subject_pattern.match(os.path.basename(x[0].strip('/')))]
+	
+	if not subjectdirs:
+		raise ValueError('Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need to run dicom2bids.SortDicoms({}) first.'.format(dicomdir))
+
+	print(bids_dict)
+	print(subjectdirs)
