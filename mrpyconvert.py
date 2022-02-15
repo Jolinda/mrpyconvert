@@ -371,7 +371,7 @@ def TestConvert(dicomdir, bidsdir, bids_dict, slurm = False, participant_file = 
 	subjectdirs = [x[0] for x in os.walk(dicomdir) if subject_pattern.match(os.path.basename(x[0].strip('/')))]
 	
 	if not subjectdirs:
-		raise ValueError('Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need to run dicom2bids.SortDicoms({}) first.'.format(dicomdir))
+		raise ValueError('Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need to run SortDicoms({}) first.'.format(dicomdir))
 
 	print(bids_dict)
 	print(subjectdirs)
