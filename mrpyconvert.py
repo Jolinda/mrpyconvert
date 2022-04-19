@@ -240,7 +240,8 @@ def GenerateCSCommand(subjectdir, bidsdir, bids_dict, json_mod = None, dcm2niix_
 	command = ''
 
 	subj_dir = os.path.join(bidsdir, 'sub-{}'.format(name))
-	series_dirs = os.listdir(subjectdir)
+	#series_dirs = os.listdir(subjectdir)
+	series_dirs = [x.name for x in pathlib.Path(subjectdir).glob('Series*')]
 
 	for series in series_dirs:
 		run, series_name = re.match(series_pattern, series).groups()
