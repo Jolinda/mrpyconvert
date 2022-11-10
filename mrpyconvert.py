@@ -8,26 +8,30 @@ import shutil
 import pwd
 import getpass
 import csv
-import pathlib
+from pathlib import Path
+from collections import namedtuple
 
 import pydicom
 
 ## todo: pathlib
 
 # valid datatype information
+from pydicom.errors import InvalidDicomError
+
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
 
 entities = ['ses', 'task', 'acq', 'ce', 'rec', 'dir', 'run', 'mod', 'echo', 'recording', 'proc', 'space']
 
 # valid suffixes for datatypes
 suffixes = dict()
-suffixes['anat'] = ['T1w', 'T2w', 'FLAIR', 'T1rho', 'T1map', 'T2map', 'T2star',
-                    'FLASH', 'PD', 'PDmap', 'PDT2', 'inplaneT1', 'inplaneT2',
+suffixes['anat'] = ['T1w', 'T2w', 'FLAIR', 'T1rho', 'T1map', 'T2map', 'T2starw',
+                    'T2starmap', 'PDw', 'PDmap', 'PDT2', 'inplaneT1', 'inplaneT2',
                     'angio', 'defacemask']
 suffixes['fmap'] = ['phasediff', 'phase1', 'phase2', 'magnitude1', 'magnitude2',
                     'magnitude', 'fieldmap', 'epi']
 suffixes['dwi'] = ['dwi', 'bvec', 'bval']
 suffixes['func'] = ['bold', 'cbv', 'phase', 'sbref', 'events', 'physio', 'stim']
+suffixes['perf'] = ['asl', 'm0scan']
 
 subject_pattern = re.compile('(.*)_([0-9]{8})(.*)')
 series_pattern = re.compile('.*Series_([0-9]*)_(.*)')
@@ -42,16 +46,60 @@ def is_dicom(filename):
 
 
 def get_series_names(directory):
-    return set([re.match(series_pattern, x.name).group(2) for x in pathlib.Path(directory).rglob('Series*')])
+    return set([re.match(series_pattern, x.name).group(2) for x in Path(directory).rglob('Series*')])
 
 
 def get_subject_name(directory):
-    name = re.search(subject_pattern, os.path.basename(directory.strip('/'))).group(1)
-    return re.sub('[^0-9a-zA-Z]+', '', name)
+    search = re.search(subject_pattern, Path(directory).name)
+    if search:
+        name = search.group(1)
+        return re.sub('[^0-9a-zA-Z]+', '', name)
+    else:
+        return None
+
+
+class Converter:
+    def __init__(self, dicom_path, bids_path, autorun=True, autosession=False):
+        self.dicom_path = Path(dicom_path)
+        self.bids_path = Path(bids_path)
+        self.all_studies = None
+        self.bids_dict = BidsDict(autorun, autosession)
+        study_dirs = [Path(root) for root, dirs, files in os.walk(self.dicom_path)
+                      if re.match(subject_pattern, Path(root).name)]
+        if not study_dirs:
+            print('No study directories found, dicoms not sorted')
+            return
+
+        Study = namedtuple('Study', ['path', 'subject', 'date', 'series'])
+        self.all_studies = [Study(sd, re.match(subject_pattern, sd.name).group(1),
+                                  re.match(subject_pattern, sd.name).group(2),
+                                  [re.match(series_pattern, Path(x).name).group(2) for x in os.listdir(sd)])
+                            for sd in study_dirs]
+
+        all_subjects = [x.subject for x in self.all_studies]
+        n_subjects = len(all_subjects)
+        n_studies = len(self.all_studies)
+        s = 's' if n_subjects != 1 else ''
+        ies = 'ies' if n_studies != 1 else 'y'
+        print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
+
+        all_series = {series for study in self.all_studies for series in study.series}
+        print(all_series)
+
+        for series in sorted(all_series):
+            for study in self.all_studies:
+                count = study.series.count(series)
+                if count > 1:
+                    print(f'{count} {series} found in {study.path.name}')
+
+    # maybe replace/augment with write slurm script?
+    def generate_commands(self):
+        for study in self.all_studies:
+            print(generate_cs_command(study.path, self.bids_path, self.bids_dict))
 
 
 class EntityChain:
-    def __init__(self, datatype, suffix, nonstandard=False, **kwargs):
+    def __init__(self, datatype, suffix, chain: dict = None, nonstandard=False):
 
         if not nonstandard:
             if datatype not in datatypes:
@@ -64,18 +112,7 @@ class EntityChain:
 
         self.datatype = datatype
         self.suffix = suffix
-
-        ## lets folks explicitly write entities = {'arg':'value'}
-        ## and/or arg = 'value', usual **kwargs way
-        self.chain = kwargs
-        if 'entities' in kwargs:
-            del (self.chain['entities'])
-            self.chain.update(kwargs['entities'])
-
-        if not self.chain:
-            self.chain = dict()
-
-        self.chain['run'] = '{}'
+        self.chain = chain
 
     def __repr__(self):
         return_string = 'datatype: {}, suffix: {}, entities: {}'.format(self.datatype, self.suffix, self.chain)
@@ -97,35 +134,35 @@ class EntityChain:
 
 # explains how to map from series names to bids entries
 class BidsDict:
-    def __init__(self):
-        self.dictionary = dict()
+    def __init__(self, autorun=True, autosession=False):
+        self.chain_dict = dict()
+        self.autorun = autorun
+        self.autosession = autosession
+        if autorun:
+            print('Bids files will include series numbers as run-{series number}')
+        else:
+            print('Warning, unknown behavior for duplicate series descriptions')
 
-    def add(self, series_description, datatype, suffix, nonstandard=False, **kwargs):
-
-        # seems awkward
-        chain = dict(kwargs)
-        if 'entities' in kwargs:
-            del (chain['entities'])
-            chain.update(kwargs['entities'])
-
-        self.dictionary[series_description] = EntityChain(datatype=datatype, suffix=suffix,
-                                                          nonstandard=nonstandard, **chain)
+    def add(self, series_description, datatype, suffix, chain: dict = None, nonstandard=False):
+        self.chain_dict[series_description] = EntityChain(datatype=datatype, suffix=suffix,
+                                                          nonstandard=nonstandard, chain=chain)
+        if self.autorun:
+            self.chain_dict[series_description].chain['run'] = '{}'
 
     def __str__(self):
         return_string = str()
-        for series in self.dictionary:
-            return_string += '{}: {}\n'.format(series, self.dictionary[series])
+        for series in self.chain_dict:
+            return_string += '{}: {}\n'.format(series, self.chain_dict[series])
         return return_string
 
     def __repr__(self):
         return_string = str()
-        for series in self.dictionary:
-            return_string += '{}: {}\n'.format(series, self.dictionary[series].__repr__())
+        for series in self.chain_dict:
+            return_string += '{}: {}\n'.format(series, self.chain_dict[series].__repr__())
         return return_string
 
 
 def write_description(subjectdir, bidsdir):
-    projectname = os.path.basename(os.path.dirname(subjectdir))
     description_file = os.path.join(bidsdir, 'dataset_description.json')
 
     if not os.path.exists(description_file):
@@ -140,6 +177,7 @@ def write_description(subjectdir, bidsdir):
             json.dump(j, f)
 
 
+# todo: how does this change with multiple sessions?
 def append_participant(subjectdir, bidsdir):
     if not os.path.exists(bidsdir):
         os.makedirs(bidsdir)
@@ -184,6 +222,37 @@ def append_participant(subjectdir, bidsdir):
         writer.writerow({'participant_id': 'sub-{}'.format(name),
                          'sex': ds.PatientSex, 'age': int(ds.PatientAge[:-1])})
     return
+
+
+
+def write_slurm_script(dicomdir, bidsdir, bids_dict, slurmfile, participant_file=True, description_file=True,
+                       json_mod=None, dcm2niix_flags='', account=None, lmod=['dcm2niix', 'jq']):
+    subjectdirs = [x[0] for x in os.walk(dicomdir) if subject_pattern.match(os.path.basename(x[0].strip('/')))]
+
+    if not subjectdirs:
+        raise ValueError(
+            'Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need '
+            'to run mrpyconvert.SortDicoms({}) first.'.format(dicomdir))
+
+    if not os.path.exists(bidsdir):
+        os.makedirs(bidsdir)
+
+    # consider pulling this out
+    if description_file:
+        write_description(subjectdirs[0], bidsdir)
+
+    with open(slurmfile) as f:
+        for mod in lmod:
+            f.write(f'module load {mod}')
+
+        for subjectdir in sorted(subjectdirs):
+
+            # consider pulling this out
+            if participant_file:
+                append_participant(subjectdir, bidsdir)
+
+            f.write(generate_cs_command(subjectdir=subjectdir, bidsdir=bidsdir, bids_dict=bids_dict, json_mod=json_mod,
+                                        dcm2niix_flags=dcm2niix_flags))
 
 
 def convert(dicomdir, bidsdir, bids_dict, slurm=False, participant_file=True, description_file=True,
@@ -231,26 +300,29 @@ def convert(dicomdir, bidsdir, bids_dict, slurm=False, participant_file=True, de
                                      shell=True)
 
 
-def generate_cs_command(subjectdir, bidsdir, bids_dict, json_mod=None, dcm2niix_flags=''):
+def generate_cs_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, dcm2niix_flags=''):
     name = get_subject_name(subjectdir)
 
     command = ''
 
-    subj_dir = os.path.join(bidsdir, 'sub-{}'.format(name))
-    # series_dirs = os.listdir(subjectdir)
-    series_dirs = [x.name for x in pathlib.Path(subjectdir).glob('Series*')]
+    subj_dir = bidsdir / f'sub-{name}'
+    series_dirs = [x.name for x in subjectdir.glob('Series*')]
 
     for series in series_dirs:
         run, series_name = re.match(series_pattern, series).groups()
         output_dir = None
-        if series_name in bids_dict.dictionary:
-            echain = bids_dict.dictionary[series_name]
+
+        dict_match = [x for x in bids_dict.chain_dict if series_name.startswith(x)]
+        if dict_match:
+            if len(dict_match) > 1:
+                print(f'multiple matches for {series_name}, taking first match')
+
+            echain = bids_dict.chain_dict[dict_match[0]]
 
             if 'ses' in echain.chain:
-                output_dir = os.path.join(subj_dir, 'ses-{}'.format(echain.chain['ses']),
-                                          echain.datatype)
+                output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
             else:
-                output_dir = os.path.join(subj_dir, echain.datatype)
+                output_dir = subj_dir / echain.datatype
 
             echain.chain['run'] = '{:02d}'.format(int(run))
             format_string = echain.get_format_string().format(name)
