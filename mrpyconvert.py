@@ -92,11 +92,127 @@ class Converter:
                 if count > 1:
                     print(f'{count} {series} found in {study.path.name}')
 
-    # maybe replace/augment with write slurm script?
-    def generate_commands(self):
-        for study in self.all_studies:
-            print(generate_cs_command(study.path, self.bids_path, self.bids_dict))
+    # if slurm = True, write script to submit to slurm
+    def convert(self, description_file=False, participant_file=False, slurmfile=None, lmod=None):
+        if not self.all_studies:
+            print('Nothing to convert')
+            return
 
+        if not os.path.exists(self.bids_path):
+            os.makedirs(self.bids_path)
+
+        if description_file:
+            write_description(self.all_studies[0], self.bids_path)
+
+        command = []
+        for mod in lmod:
+            command.append(f'module load {mod}')
+        for study in self.all_studies:
+            if participant_file:
+                append_participant(study.path, self.bids_path)
+
+            command.append(generate_cs_command(subjectdir=study.path,
+                                               bidsdir=self.bids_path,
+                                               bids_dict=self.bids_dict))
+
+        if slurmfile:
+            for line in command:
+                print(line)
+        else:
+            # todo, make work with list for command
+            process = subprocess.run(command,
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT,
+                                     universal_newlines=True,
+                                     shell=True)
+
+    def generate_commands(self, series_description, json_mod=None, dcm2niix_flags=''):
+        if series_description not in self.bids_dict.chain_dict:
+            return None
+
+        command = []
+        echain = self.bids_dict.chain_dict[series_description]
+        subj_dir = self.bids_path / 'sub-${name}'
+        if 'ses' in echain.chain:
+            output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
+        else:
+            output_dir = subj_dir / echain.datatype
+        #echain.chain['run'] = '{:02d}'.format(int(run))
+
+        format_string = echain.get_format_string()
+        command.append(f'dcmoutput=$(dcm2niix -ba n -l o -o "{output_dir}" -f {format_string} {dcm2niix_flags} '
+                       '${input_dir})')
+        command.append('echo "${dcmoutput}"')
+        command.append('if grep -q Convert <<< ${dcmoutput} ')
+        command.append('  then tmparray=($(echo "${dcmoutput}" | grep Convert ))')
+        command.append('  output_file=${tmparray[4]}')
+
+        if 'task' in echain.chain:
+            command.append(f'  taskname={echain.chain["task"]}')
+            command.append('  jq --arg a "${taskname}" \'.TaskName = $a\' ${output_file}.json > ${output_file}.tmp ')
+            command.append('  mv ${output_file}.tmp ${output_file}.json')
+
+        if echain.datatype == 'dwi':
+            command.append(f'  for x in {output_dir}/*dwi.bv*')
+            command.append('    do mv $x ${x//dwi.}')
+            command.append('done')
+
+        command.append('else output_file=""')
+        command.append('fi')
+        # json_file = output_dir / format_string + '.json')
+        #             if 'task' in echain.chain:
+        #                 command += fix_json(json_file, 'TaskName', echain.chain['task'])
+        #
+        #             if json_mod:
+        #                 for key in json_mod:
+        #                     command += fix_json(json_file, key, json_mod[key])
+        #
+        #             if echain.datatype == 'dwi':
+        #                 command += fix_dwi_files(output_dir)
+        return command
+    #     name = study.subject
+    #
+    #     command = ''
+    #
+    #     subj_dir = bidsdir / f'sub-{name}'
+    #     series_dirs = [x.name for x in study.path.glob('Series*')]
+    #
+    #     for series in series_dirs:
+    #         run, series_name = re.match(series_pattern, series).groups()
+    #         output_dir = None
+    #
+    #         dict_match = [x for x in self.bids_dict.chain_dict if series_name.startswith(x)]
+    #         if dict_match:
+    #             if len(dict_match) > 1:
+    #                 print(f'multiple matches for {series_name}, taking first match')
+    #
+    #             echain = bids_dict.chain_dict[dict_match[0]]
+    #
+    #             if 'ses' in echain.chain:
+    #                 output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
+    #             else:
+    #                 output_dir = subj_dir / echain.datatype
+    #
+    #             echain.chain['run'] = '{:02d}'.format(int(run))
+    #             format_string = echain.get_format_string().format(name)
+    #
+    #             if not os.path.exists(output_dir):
+    #                 os.makedirs(output_dir)
+    #
+    #             command += 'dcm2niix -ba n -l o -o "{}" -f {} {} "{}"\n'.format(output_dir,
+    #                                                                             format_string, dcm2niix_flags,
+    #                                                                             os.path.join(subjectdir, series))
+    #
+    #             json_file = os.path.join(output_dir, format_string + '.json')
+    #             if 'task' in echain.chain:
+    #                 command += fix_json(json_file, 'TaskName', echain.chain['task'])
+    #
+    #             if json_mod:
+    #                 for key in json_mod:
+    #                     command += fix_json(json_file, key, json_mod[key])
+    #
+    #             if echain.datatype == 'dwi':
+    #                 command += fix_dwi_files(output_dir)
 
 class EntityChain:
     def __init__(self, datatype, suffix, chain: dict = None, nonstandard=False):
@@ -119,7 +235,7 @@ class EntityChain:
         return return_string
 
     def get_format_string(self):
-        format_string = 'sub-{}_'
+        format_string = 'sub-${name}_'
         if self.chain:
             for key, value in [(k, self.chain[k]) for k in entities if k in self.chain]:
                 format_string += '{}-{}_'.format(key, value)
@@ -348,6 +464,8 @@ def generate_cs_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, dcm
     return command
 
 
+
+
 # Given a path into the talapas dcm repo, generate a list of authors
 def get_authors(dicompath):
     authorlist = set()  # no duplicates
@@ -359,12 +477,59 @@ def get_authors(dicompath):
     # add pi from pirg if possible
     if dicompath.startswith('/projects/lcni/dcm/'):
         pirg = dicompath.split('/')[4]
+
         if os.path.exists(os.path.join('/projects', pirg)):
             pi_uid = os.stat(os.path.join('/projects', pirg)).st_uid
             pi_name = pwd.getpwuid(pi_uid).pw_gecos
             authorlist.add(pi_name)
 
     return list(authorlist)
+
+def generate_slurm_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, dcm2niix_flags=''):
+    name = get_subject_name(subjectdir)
+
+    command = ''
+
+    subj_dir = bidsdir / f'sub-{name}'
+    series_dirs = [x.name for x in subjectdir.glob('Series*')]
+
+    for series in series_dirs:
+        run, series_name = re.match(series_pattern, series).groups()
+        output_dir = None
+
+        dict_match = [x for x in bids_dict.chain_dict if series_name.startswith(x)]
+        if dict_match:
+            if len(dict_match) > 1:
+                print(f'multiple matches for {series_name}, taking first match')
+
+            echain = bids_dict.chain_dict[dict_match[0]]
+
+            if 'ses' in echain.chain:
+                output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
+            else:
+                output_dir = subj_dir / echain.datatype
+
+            echain.chain['run'] = '{:02d}'.format(int(run))
+            format_string = echain.get_format_string().format(name)
+
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+
+            command += 'dcm2niix -ba n -l o -o "{}" -f {} {} "{}"\n'.format(output_dir,
+                                                                            format_string, dcm2niix_flags,
+                                                                            os.path.join(subjectdir, series))
+
+            json_file = os.path.join(output_dir, format_string + '.json')
+            if 'task' in echain.chain:
+                command += fix_json(json_file, 'TaskName', echain.chain['task'])
+
+            if json_mod:
+                for key in json_mod:
+                    command += fix_json(json_file, key, json_mod[key])
+
+            if echain.datatype == 'dwi':
+                command += fix_dwi_files(output_dir)
+
 
 
 # returns the jq command string to add or modify a json file
