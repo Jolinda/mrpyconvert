@@ -10,14 +10,14 @@ import getpass
 import csv
 from pathlib import Path
 from collections import namedtuple
-
 import pydicom
-
-## todo: pathlib
-
-# valid datatype information
 from pydicom.errors import InvalidDicomError
 
+# todo: pathlib
+# todo: refactor bidsdict/chaindict etc.
+# todo: make sorter work
+
+# valid datatype information
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
 
 entities = ['ses', 'task', 'acq', 'ce', 'rec', 'dir', 'run', 'mod', 'echo', 'recording', 'proc', 'space']
@@ -73,7 +73,7 @@ class Converter:
         Study = namedtuple('Study', ['path', 'subject', 'date', 'series'])
         self.all_studies = [Study(sd, re.match(subject_pattern, sd.name).group(1),
                                   re.match(subject_pattern, sd.name).group(2),
-                                  [re.match(series_pattern, Path(x).name).group(2) for x in os.listdir(sd)])
+                                  os.listdir(sd))
                             for sd in study_dirs]
 
         all_subjects = [x.subject for x in self.all_studies]
@@ -83,49 +83,61 @@ class Converter:
         ies = 'ies' if n_studies != 1 else 'y'
         print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
 
-        all_series = {series for study in self.all_studies for series in study.series}
+        all_series = {re.match(series_pattern, series).group(2)
+                      for study in self.all_studies for series in study.series}
         print(all_series)
 
-        for series in sorted(all_series):
-            for study in self.all_studies:
-                count = study.series.count(series)
-                if count > 1:
-                    print(f'{count} {series} found in {study.path.name}')
+        # todo, fix or toss
+        # for series in sorted(all_series):
+        #     for study in self.all_studies:
+        #         count = study.series.count(series)
+        #         if count > 1:
+        #             print(f'{count} {series} found in {study.path.name}')
 
     # if slurm = True, write script to submit to slurm
+    # todo: move participant file creation into class
+    # todo: move write description into class
     def convert(self, description_file=False, participant_file=False, slurmfile=None, lmod=None):
         if not self.all_studies:
             print('Nothing to convert')
             return
 
-        if not os.path.exists(self.bids_path):
-            os.makedirs(self.bids_path)
+        self.bids_path.mkdir(exist_ok=True)
 
         if description_file:
             write_description(self.all_studies[0], self.bids_path)
 
-        command = []
-        for mod in lmod:
-            command.append(f'module load {mod}')
         for study in self.all_studies:
             if participant_file:
                 append_participant(study.path, self.bids_path)
 
-            command.append(generate_cs_command(subjectdir=study.path,
-                                               bidsdir=self.bids_path,
-                                               bids_dict=self.bids_dict))
+        # there will be a command list/slurm file for each series
+        for series in self.bids_dict.chain_dict:
 
-        if slurmfile:
-            for line in command:
-                print(line)
-        else:
-            # todo, make work with list for command
-            process = subprocess.run(command,
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT,
-                                     universal_newlines=True,
-                                     shell=True)
+            # todo: this can't be correct
+            series_to_convert = [(se, st) for st in self.all_studies for se in st.series if series in se]
+            names = [st.subject for (se, st) in series_to_convert]
+            paths = [st.path / se for (se, st) in series_to_convert]
+            print(names)
+            print(paths)
 
+            command = []
+            for mod in lmod:
+                command.append(f'module load {mod}')
+            command.extend(self.generate_commands(series))
+
+            if slurmfile:
+                for line in command:
+                    print(line)
+            else:
+                # todo, this won't actually work right now
+                process = subprocess.run(command,
+                                         stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT,
+                                         universal_newlines=True,
+                                         shell=True)
+
+    # todo: run numbers, fieldmap json edits
     def generate_commands(self, series_description, json_mod=None, dcm2niix_flags=''):
         if series_description not in self.bids_dict.chain_dict:
             return None
@@ -137,7 +149,7 @@ class Converter:
             output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
         else:
             output_dir = subj_dir / echain.datatype
-        #echain.chain['run'] = '{:02d}'.format(int(run))
+        # echain.chain['run'] = '{:02d}'.format(int(run))
 
         format_string = echain.get_format_string()
         command.append(f'dcmoutput=$(dcm2niix -ba n -l o -o "{output_dir}" -f {format_string} {dcm2niix_flags} '
@@ -159,16 +171,7 @@ class Converter:
 
         command.append('else output_file=""')
         command.append('fi')
-        # json_file = output_dir / format_string + '.json')
-        #             if 'task' in echain.chain:
-        #                 command += fix_json(json_file, 'TaskName', echain.chain['task'])
-        #
-        #             if json_mod:
-        #                 for key in json_mod:
-        #                     command += fix_json(json_file, key, json_mod[key])
-        #
-        #             if echain.datatype == 'dwi':
-        #                 command += fix_dwi_files(output_dir)
+
         return command
     #     name = study.subject
     #
@@ -214,6 +217,7 @@ class Converter:
     #             if echain.datatype == 'dwi':
     #                 command += fix_dwi_files(output_dir)
 
+
 class EntityChain:
     def __init__(self, datatype, suffix, chain: dict = None, nonstandard=False):
 
@@ -256,8 +260,6 @@ class BidsDict:
         self.autosession = autosession
         if autorun:
             print('Bids files will include series numbers as run-{series number}')
-        else:
-            print('Warning, unknown behavior for duplicate series descriptions')
 
     def add(self, series_description, datatype, suffix, chain: dict = None, nonstandard=False):
         self.chain_dict[series_description] = EntityChain(datatype=datatype, suffix=suffix,
@@ -338,7 +340,6 @@ def append_participant(subjectdir, bidsdir):
         writer.writerow({'participant_id': 'sub-{}'.format(name),
                          'sex': ds.PatientSex, 'age': int(ds.PatientAge[:-1])})
     return
-
 
 
 def write_slurm_script(dicomdir, bidsdir, bids_dict, slurmfile, participant_file=True, description_file=True,
@@ -464,8 +465,6 @@ def generate_cs_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, dcm
     return command
 
 
-
-
 # Given a path into the talapas dcm repo, generate a list of authors
 def get_authors(dicompath):
     authorlist = set()  # no duplicates
@@ -484,6 +483,7 @@ def get_authors(dicompath):
             authorlist.add(pi_name)
 
     return list(authorlist)
+
 
 def generate_slurm_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, dcm2niix_flags=''):
     name = get_subject_name(subjectdir)
@@ -529,7 +529,6 @@ def generate_slurm_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, 
 
             if echain.datatype == 'dwi':
                 command += fix_dwi_files(output_dir)
-
 
 
 # returns the jq command string to add or modify a json file
