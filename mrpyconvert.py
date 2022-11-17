@@ -58,12 +58,17 @@ def get_subject_name(directory):
         return None
 
 
+# directory is a string
+def get_series_number(directory):
+    return int(re.match(series_pattern, directory).group(1))
+
+
 class Converter:
-    def __init__(self, dicom_path, bids_path, autorun=True, autosession=False):
+    def __init__(self, dicom_path, bids_path, autosession=False):
         self.dicom_path = Path(dicom_path)
         self.bids_path = Path(bids_path)
         self.all_studies = None
-        self.bids_dict = BidsDict(autorun, autosession)
+        self.bids_dict = BidsDict(autosession)
         study_dirs = [Path(root) for root, dirs, files in os.walk(self.dicom_path)
                       if re.match(subject_pattern, Path(root).name)]
         if not study_dirs:
@@ -96,8 +101,9 @@ class Converter:
 
     # if slurm = True, write script to submit to slurm
     # todo: move participant file creation into class
-    # todo: move write description into class
-    def convert(self, description_file=False, participant_file=False, slurmfile=None, lmod=None):
+    # todo: move write description into classPath(directory).name
+    def convert(self, description_file=False, participant_file=False, script_ext='.sh',
+                script_path=os.getcwd(), slurm=False, additional=None):
         if not self.all_studies:
             print('Nothing to convert')
             return
@@ -112,44 +118,66 @@ class Converter:
                 append_participant(study.path, self.bids_path)
 
         # there will be a command list/slurm file for each series
-        for series in self.bids_dict.chain_dict:
+        for series, index in self.bids_dict.chain_dict:
 
-            # todo: this can't be correct
-            series_to_convert = [(se, st) for st in self.all_studies for se in st.series if series in se]
-            names = [st.subject for (se, st) in series_to_convert]
-            paths = [st.path / se for (se, st) in series_to_convert]
-            print(names)
-            print(paths)
-
-            command = []
-            for mod in lmod:
-                command.append(f'module load {mod}')
-            command.extend(self.generate_commands(series))
-
-            if slurmfile:
-                for line in command:
-                    print(line)
+            if index:
+                studies_to_convert = [st for st in self.all_studies if any(series in s for s in st.series)]
+                series_to_convert = []
+                for st in studies_to_convert:
+                    sorted_series = sorted([s for s in st.series if series in s],
+                                             key=lambda x: get_series_number(x))
+                    if len(sorted_series) >= index:
+                        series_to_convert.append((sorted_series[index - 1], st))
+                script_name = f'{series}-{index}'
             else:
-                # todo, this won't actually work right now
-                process = subprocess.run(command,
-                                         stdout=subprocess.PIPE,
-                                         stderr=subprocess.STDOUT,
-                                         universal_newlines=True,
-                                         shell=True)
+                series_to_convert = [(se, st) for st in self.all_studies for se in st.series if series in se]
+                script_name = series
 
-    # todo: run numbers, fieldmap json edits
-    def generate_commands(self, series_description, json_mod=None, dcm2niix_flags=''):
-        if series_description not in self.bids_dict.chain_dict:
-            return None
+            names = [st.subject for (se, st) in series_to_convert]
+            paths = [str(st.path / se) for (se, st) in series_to_convert]
+            command = ['#!/bin/bash\n']
+            if slurm:
+                command.append(f'#SBATCH --jobname={script_name}')
+                command.append(f'#SBATCH --array=0-{len(names) - 1}')
+            for extra_command in additional:
+                command.append(extra_command)
+
+            command.append('names=({})'.format(' '.join(names)))
+            command.append('input_dirs=({})'.format(' '.join(paths)))
+            command.append('\n')
+
+            if slurm:
+                command.append('name=${names[$SLURM_ARRAY_TASK_ID]}')
+                command.append('input_dir=${input_dirs[$SLURM_ARRAY_TASK_ID]}')
+            else:
+                command.append('for i in "${names[@]}"; do')
+                command.append('name=${names[$i]}')
+                command.append('input_dir=${input_dirs[$i]}')
+
+            command.extend(self.generate_commands(series, index))
+
+            if not slurm:
+                command.append('done')
+
+            script_name = Path(script_path) / (script_name + script_ext)
+            print(script_name)
+            with open(script_name, 'w') as f:
+                for line in command:
+                    f.write(line)
+                    f.write('\n')
+
+    # todo: fieldmap json edits
+    def generate_commands(self, series_description, index=0, dcm2niix_flags=''):
+        if (series_description, index) not in self.bids_dict.chain_dict:
+            return []
 
         command = []
-        echain = self.bids_dict.chain_dict[series_description]
+        echain = self.bids_dict.chain_dict[(series_description, index)]
         subj_dir = self.bids_path / 'sub-${name}'
         if 'ses' in echain.chain:
             output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
         else:
             output_dir = subj_dir / echain.datatype
-        # echain.chain['run'] = '{:02d}'.format(int(run))
 
         format_string = echain.get_format_string()
         command.append(f'dcmoutput=$(dcm2niix -ba n -l o -o "{output_dir}" -f {format_string} {dcm2niix_flags} '
@@ -176,7 +204,7 @@ class Converter:
     #     name = study.subject
     #
     #     command = ''
-    #
+    # self
     #     subj_dir = bidsdir / f'sub-{name}'
     #     series_dirs = [x.name for x in study.path.glob('Series*')]
     #
@@ -252,31 +280,27 @@ class EntityChain:
         return self.get_format_string()
 
 
+# todo: autosession
 # explains how to map from series names to bids entries
 class BidsDict:
-    def __init__(self, autorun=True, autosession=False):
+    def __init__(self, autosession=False):
         self.chain_dict = dict()
-        self.autorun = autorun
         self.autosession = autosession
-        if autorun:
-            print('Bids files will include series numbers as run-{series number}')
 
-    def add(self, series_description, datatype, suffix, chain: dict = None, nonstandard=False):
-        self.chain_dict[series_description] = EntityChain(datatype=datatype, suffix=suffix,
-                                                          nonstandard=nonstandard, chain=chain)
-        if self.autorun:
-            self.chain_dict[series_description].chain['run'] = '{}'
+    def add(self, series_description, datatype, suffix, chain: dict = None, nonstandard=False, index=0):
+        self.chain_dict[(series_description, index)] = EntityChain(datatype=datatype, suffix=suffix,
+                                                                   nonstandard=nonstandard, chain=chain)
 
     def __str__(self):
         return_string = str()
-        for series in self.chain_dict:
-            return_string += '{}: {}\n'.format(series, self.chain_dict[series])
+        for series, index in self.chain_dict:
+            return_string += '{}: {}\n'.format(series, self.chain_dict[(series, index)])
         return return_string
 
     def __repr__(self):
         return_string = str()
-        for series in self.chain_dict:
-            return_string += '{}: {}\n'.format(series, self.chain_dict[series].__repr__())
+        for series, index in self.chain_dict:
+            return_string += '{}: {}\n'.format(series, self.chain_dict[(series, index)].__repr__())
         return return_string
 
 
@@ -340,129 +364,6 @@ def append_participant(subjectdir, bidsdir):
         writer.writerow({'participant_id': 'sub-{}'.format(name),
                          'sex': ds.PatientSex, 'age': int(ds.PatientAge[:-1])})
     return
-
-
-def write_slurm_script(dicomdir, bidsdir, bids_dict, slurmfile, participant_file=True, description_file=True,
-                       json_mod=None, dcm2niix_flags='', account=None, lmod=['dcm2niix', 'jq']):
-    subjectdirs = [x[0] for x in os.walk(dicomdir) if subject_pattern.match(os.path.basename(x[0].strip('/')))]
-
-    if not subjectdirs:
-        raise ValueError(
-            'Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need '
-            'to run mrpyconvert.SortDicoms({}) first.'.format(dicomdir))
-
-    if not os.path.exists(bidsdir):
-        os.makedirs(bidsdir)
-
-    # consider pulling this out
-    if description_file:
-        write_description(subjectdirs[0], bidsdir)
-
-    with open(slurmfile) as f:
-        for mod in lmod:
-            f.write(f'module load {mod}')
-
-        for subjectdir in sorted(subjectdirs):
-
-            # consider pulling this out
-            if participant_file:
-                append_participant(subjectdir, bidsdir)
-
-            f.write(generate_cs_command(subjectdir=subjectdir, bidsdir=bidsdir, bids_dict=bids_dict, json_mod=json_mod,
-                                        dcm2niix_flags=dcm2niix_flags))
-
-
-def convert(dicomdir, bidsdir, bids_dict, slurm=False, participant_file=True, description_file=True,
-            json_mod=None, dcm2niix_flags='', throttle=False, account=None,
-            lmod=['dcm2niix', 'jq']):
-    subjectdirs = [x[0] for x in os.walk(dicomdir) if subject_pattern.match(os.path.basename(x[0].strip('/')))]
-
-    if not subjectdirs:
-        raise ValueError(
-            'Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need '
-            'to run mrpyconvert.SortDicoms({}) first.'.format(dicomdir))
-
-    if not os.path.exists(bidsdir):
-        os.makedirs(bidsdir)
-
-    if description_file:
-        write_description(subjectdirs[0], bidsdir)
-
-    command_base = ''
-    for mod in lmod:
-        command_base += 'module load {}\n'.format(mod)
-
-    for subjectdir in sorted(subjectdirs):
-
-        if participant_file:
-            append_participant(subjectdir, bidsdir)
-
-        command = command_base + generate_cs_command(subjectdir=subjectdir, bidsdir=bidsdir, bids_dict=bids_dict,
-                                                     json_mod=json_mod, dcm2niix_flags=dcm2niix_flags)
-
-        # print(command)
-
-        if slurm:
-            import slurmpy
-            job = slurmpy.SlurmJob(jobname='convert', command=command, account=account)
-            filename = tempfile.NamedTemporaryFile().name
-            job.WriteSlurmFile(filename=filename)
-            job.SubmitSlurmFile()
-            if throttle:
-                slurmpy.SlurmThrottle()  # Mike's helper script, helps with large # of submissions
-
-        else:
-            # print(command)
-            process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True,
-                                     shell=True)
-
-
-def generate_cs_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, dcm2niix_flags=''):
-    name = get_subject_name(subjectdir)
-
-    command = ''
-
-    subj_dir = bidsdir / f'sub-{name}'
-    series_dirs = [x.name for x in subjectdir.glob('Series*')]
-
-    for series in series_dirs:
-        run, series_name = re.match(series_pattern, series).groups()
-        output_dir = None
-
-        dict_match = [x for x in bids_dict.chain_dict if series_name.startswith(x)]
-        if dict_match:
-            if len(dict_match) > 1:
-                print(f'multiple matches for {series_name}, taking first match')
-
-            echain = bids_dict.chain_dict[dict_match[0]]
-
-            if 'ses' in echain.chain:
-                output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
-            else:
-                output_dir = subj_dir / echain.datatype
-
-            echain.chain['run'] = '{:02d}'.format(int(run))
-            format_string = echain.get_format_string().format(name)
-
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-
-            command += 'dcm2niix -ba n -l o -o "{}" -f {} {} "{}"\n'.format(output_dir,
-                                                                            format_string, dcm2niix_flags,
-                                                                            os.path.join(subjectdir, series))
-
-            json_file = os.path.join(output_dir, format_string + '.json')
-            if 'task' in echain.chain:
-                command += fix_json(json_file, 'TaskName', echain.chain['task'])
-
-            if json_mod:
-                for key in json_mod:
-                    command += fix_json(json_file, key, json_mod[key])
-
-            if echain.datatype == 'dwi':
-                command += fix_dwi_files(output_dir)
-
-    return command
 
 
 # Given a path into the talapas dcm repo, generate a list of authors
@@ -599,17 +500,3 @@ def sort_dicoms(input_dir, output_dir, overwrite=False, preview=False, slurm=Fal
 
     if duplicates:
         print('One or more files already existing and not moved')
-
-
-def test_convert(dicomdir, bidsdir, bids_dict, slurm=False, participant_file=True, description_file=True,
-                 json_mod=None, dcm2niix_flags='', throttle=False, account=None,
-                 lmod=['dcm2niix', 'jq']):
-    subjectdirs = [x[0] for x in os.walk(dicomdir) if subject_pattern.match(os.path.basename(x[0].strip('/')))]
-
-    if not subjectdirs:
-        raise ValueError(
-            'Unable to find subject level directories. Are dicoms in lcni standard directory structure? You may need to run SortDicoms({}) first.'.format(
-                dicomdir))
-
-    print(bids_dict)
-    print(subjectdirs)
