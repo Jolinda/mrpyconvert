@@ -1,21 +1,10 @@
-import tempfile
 import re
 import json
-import subprocess
 import os
-import glob
-import shutil
-import pwd
-import getpass
 import csv
-from pathlib import Path
-from collections import namedtuple
+from pathlib import Path, PurePath
 import pydicom
 from pydicom.errors import InvalidDicomError
-
-# todo: pathlib
-# todo: refactor bidsdict/chaindict etc.
-# todo: make sorter work
 
 # valid datatype information
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
@@ -28,7 +17,7 @@ suffixes['anat'] = ['T1w', 'T2w', 'FLAIR', 'T1rho', 'T1map', 'T2map', 'T2starw',
                     'T2starmap', 'PDw', 'PDmap', 'PDT2', 'inplaneT1', 'inplaneT2',
                     'angio', 'defacemask']
 suffixes['fmap'] = ['phasediff', 'phase1', 'phase2', 'magnitude1', 'magnitude2',
-                    'magnitude', 'fieldmap', 'epi']
+                    'magnitude', 'fieldmap', 'epi', 'auto']
 suffixes['dwi'] = ['dwi', 'bvec', 'bval']
 suffixes['func'] = ['bold', 'cbv', 'phase', 'sbref', 'events', 'physio', 'stim']
 suffixes['perf'] = ['asl', 'm0scan']
@@ -37,7 +26,12 @@ subject_pattern = re.compile('(.*)_([0-9]{8})(.*)')
 series_pattern = re.compile('.*Series_([0-9]*)_(.*)')
 
 
+# todo: read more info from dicoms instead of from directory names?
+# would still assume sorted by subject/series but no assumption about directory names
+# could be slower
 def is_dicom(filename):
+    if not Path(filename).exists() or not Path(filename).is_file():
+        return False
     try:
         pydicom.dcmread(filename)
     except pydicom.errors.InvalidDicomError:
@@ -58,30 +52,54 @@ def get_subject_name(directory):
         return None
 
 
+def get_date(directory):
+    search = re.search(subject_pattern, Path(directory).name)
+    if search:
+        return search.group(2)
+    else:
+        return None
+
+
 # directory is a string
 def get_series_number(directory):
     return int(re.match(series_pattern, directory).group(1))
 
 
+class Study:
+    def __init__(self, study_path):
+        self.path = study_path
+        self.subject = get_subject_name(study_path)
+        self.date = get_date(study_path)
+        self.series = os.listdir(study_path)
+        self.session = None
+
+
+# todo: phasediff fieldmaps will need both echo times in json, alTE[0] and [1] in seriesheader
 class Converter:
     def __init__(self, dicom_path, bids_path, autosession=False):
         self.dicom_path = Path(dicom_path)
         self.bids_path = Path(bids_path)
         self.all_studies = None
+        self.autosession = autosession
         self.bids_dict = BidsDict(autosession)
-        study_dirs = [Path(root) for root, dirs, files in os.walk(self.dicom_path)
+        study_dirs = [Path(root) for root, dirs, files in os.walk(dicom_path)
                       if re.match(subject_pattern, Path(root).name)]
         if not study_dirs:
             print('No study directories found, dicoms not sorted')
             return
 
-        Study = namedtuple('Study', ['path', 'subject', 'date', 'series'])
-        self.all_studies = [Study(sd, re.match(subject_pattern, sd.name).group(1),
-                                  re.match(subject_pattern, sd.name).group(2),
-                                  os.listdir(sd))
-                            for sd in study_dirs]
+        self.all_studies = [Study(sd) for sd in study_dirs]
 
-        all_subjects = [x.subject for x in self.all_studies]
+        all_subjects = {x.subject for x in self.all_studies}
+        if autosession:
+            for subject in all_subjects:
+                studies = sorted([s for s in self.all_studies if s.subject == subject],
+                                 key=lambda x: x.date)
+                for i, study in enumerate(studies):
+                    self.all_studies[self.all_studies.index(study)].session = i + 1
+
+    def analyze(self):
+        all_subjects = {x.subject for x in self.all_studies}
         n_subjects = len(all_subjects)
         n_studies = len(self.all_studies)
         s = 's' if n_subjects != 1 else ''
@@ -90,32 +108,29 @@ class Converter:
 
         all_series = {re.match(series_pattern, series).group(2)
                       for study in self.all_studies for series in study.series}
-        print(all_series)
 
-        # todo, fix or toss
-        # for series in sorted(all_series):
-        #     for study in self.all_studies:
-        #         count = study.series.count(series)
-        #         if count > 1:
-        #             print(f'{count} {series} found in {study.path.name}')
+        print('\n'.join(sorted(all_series)))
+        for series in sorted(all_series):
+            for study in self.all_studies:
+                count = len([s for s in study.series if s.endswith(series)])
+                if count > 1:
+                    print(f'{count} {series} found in {study.path.name}')
 
-    # if slurm = True, write script to submit to slurm
-    # todo: move participant file creation into class
-    # todo: move write description into classPath(directory).name
-    def convert(self, description_file=False, participant_file=False, script_ext='.sh',
-                script_path=os.getcwd(), slurm=False, additional=None):
+    # todo: decide what to do about description file, participant file
+    def convert(self, script_ext='.sh', script_path=os.getcwd(), slurm=False, additional_commands=None):
         if not self.all_studies:
             print('Nothing to convert')
             return
 
-        self.bids_path.mkdir(exist_ok=True)
+        # if we don't write the description or participants file, we don't need this here
+        self.bids_path.mkdir(exist_ok=True, parents=True)
 
-        if description_file:
-            write_description(self.all_studies[0], self.bids_path)
-
-        for study in self.all_studies:
-            if participant_file:
-                append_participant(study.path, self.bids_path)
+        # if description_file:
+        #     write_description(self.bids_path)
+        #
+        # for study in self.all_studies:
+        #     if participant_file:
+        #         append_participant(study.path, self.bids_path)
 
         # there will be a command list/slurm file for each series
         for series, index in self.bids_dict.chain_dict:
@@ -125,7 +140,7 @@ class Converter:
                 series_to_convert = []
                 for st in studies_to_convert:
                     sorted_series = sorted([s for s in st.series if series in s],
-                                             key=lambda x: get_series_number(x))
+                                           key=lambda x: get_series_number(x))
                     if len(sorted_series) >= index:
                         series_to_convert.append((sorted_series[index - 1], st))
                 script_name = f'{series}-{index}'
@@ -134,25 +149,35 @@ class Converter:
                 script_name = series
 
             names = [st.subject for (se, st) in series_to_convert]
-            paths = [str(st.path / se) for (se, st) in series_to_convert]
+            paths = [str(PurePath(st.path / se).relative_to(self.dicom_path)) for (se, st) in series_to_convert]
             command = ['#!/bin/bash\n']
             if slurm:
                 command.append(f'#SBATCH --jobname={script_name}')
                 command.append(f'#SBATCH --array=0-{len(names) - 1}')
-            for extra_command in additional:
-                command.append(extra_command)
+            if additional_commands:
+                for extra_command in additional_commands:
+                    command.append(extra_command)
 
+            command.append(f'dicom_path={self.dicom_path}')
+            command.append(f'bids_path={self.bids_path}')
             command.append('names=({})'.format(' '.join(names)))
-            command.append('input_dirs=({})'.format(' '.join(paths)))
+            sessions = [str(st.session) for (se, st) in series_to_convert]
+            if any(sessions):
+                command.append('sessions=({})'.format(' '.join(sessions)))
+            command.append('input_dirs=({})'.format(' \\\n            '.join(paths)))
             command.append('\n')
 
             if slurm:
                 command.append('name=${names[$SLURM_ARRAY_TASK_ID]}')
                 command.append('input_dir=${input_dirs[$SLURM_ARRAY_TASK_ID]}')
+                if any(sessions):
+                    command.append('session=${sessions[$SLURM_ARRAY_TASK_ID]}')
             else:
-                command.append('for i in "${names[@]}"; do')
+                command.append('for i in "${!names[@]}"; do')
                 command.append('name=${names[$i]}')
                 command.append('input_dir=${input_dirs[$i]}')
+                if any(sessions):
+                    command.append('session=${sessions[$i]}')
 
             command.extend(self.generate_commands(series, index))
 
@@ -166,84 +191,103 @@ class Converter:
                     f.write(line)
                     f.write('\n')
 
-    # todo: fieldmap json edits
     def generate_commands(self, series_description, index=0, dcm2niix_flags=''):
         if (series_description, index) not in self.bids_dict.chain_dict:
             return []
 
         command = []
         echain = self.bids_dict.chain_dict[(series_description, index)]
-        subj_dir = self.bids_path / 'sub-${name}'
+        subj_dir = Path('sub-${name}')
+
         if 'ses' in echain.chain:
             output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
+        elif self.autosession:
+            output_dir = subj_dir / 'ses-${session}' / echain.datatype
         else:
             output_dir = subj_dir / echain.datatype
 
         format_string = echain.get_format_string()
-        command.append(f'dcmoutput=$(dcm2niix -ba n -l o -o "{output_dir}" -f {format_string} {dcm2niix_flags} '
-                       '${input_dir})')
+        command.append(f'mkdir --parents "${{bids_path}}/{output_dir}"')
+        command.append(
+            f'dcmoutput=$(dcm2niix -ba n -l o -o "${{bids_path}}/{output_dir}" -f "{format_string}" {dcm2niix_flags} '
+            '${dicom_path}/${input_dir})')
         command.append('echo "${dcmoutput}"')
-        command.append('if grep -q Convert <<< ${dcmoutput} ')
-        command.append('  then tmparray=($(echo "${dcmoutput}" | grep Convert ))')
-        command.append('  output_file=${tmparray[4]}')
 
-        if 'task' in echain.chain:
-            command.append(f'  taskname={echain.chain["task"]}')
-            command.append('  jq --arg a "${taskname}" \'.TaskName = $a\' ${output_file}.json > ${output_file}.tmp ')
-            command.append('  mv ${output_file}.tmp ${output_file}.json')
+        if self.bids_dict.json[(series_description, index)] or (echain.datatype == 'fmap' and echain.suffix == 'auto'):
+            command.append('\n# get names of converted files')
+            command.append('if grep -q Convert <<< ${dcmoutput} ')
+            command.append('  then tmparray=($(echo "${dcmoutput}" | grep Convert ))')
+            command.append('  output_files=()')
+            command.append('  for ((i=4; i<${#tmparray[@]}; i+=6)); do output_files+=("${tmparray[$i]}"); done')
+            command.append('  for output_file in ${output_files[@]}; do')
+
+            if self.bids_dict.json[(series_description, index)]:
+                jq_command = '    jq \''
+                jq_command += '|'.join([f'.{key} = "{value}"' for key, value in
+                                        self.bids_dict.json[(series_description, index)].items()])
+                jq_command += '\' ${output_file}.json > ${output_file}.tmp '
+                command.append('\n# add fields to json file(s)')
+                command.append(jq_command)
+                command.append('    mv ${output_file}.tmp ${output_file}.json')
+
+            if echain.datatype == 'fmap' and echain.suffix == 'auto':
+                command.append('\n# rename fieldmap file(s)')
+                command.append('    for filename in ${output_file}*; do')
+                command.append('      newname=${output_file}')
+                command.append('      if [[ ${filename} =~ "auto_e1" ]]; then')
+                command.append('        newname=$(echo ${filename}|sed "s:auto_e1:magnitude1:g"); fi')
+                command.append('      if [[ ${filename} =~ "auto_e2" ]]; then')
+                command.append('        newname=$(echo ${filename}|sed "s:auto_e2:magnitude2:g"); fi')
+                command.append('      if [[ ${filename} =~ "auto_e2_ph" ]]; then')
+                command.append('        newname=$(echo ${filename}|sed "s:auto_e2_ph:phasediff:g"); fi')
+                command.append('      mv ${filename} ${newname}')
+                command.append('    done')
+
+            command.append('  done')
+            command.append('fi')
 
         if echain.datatype == 'dwi':
-            command.append(f'  for x in {output_dir}/*dwi.bv*')
+            command.append('\n# rename bvecs and bvals files')
+            command.append(f'  for x in ${{bids_path}}/{output_dir}/*dwi.bv*')
             command.append('    do mv $x ${x//dwi.}')
             command.append('done')
 
-        command.append('else output_file=""')
-        command.append('fi')
-
         return command
-    #     name = study.subject
-    #
-    #     command = ''
-    # self
-    #     subj_dir = bidsdir / f'sub-{name}'
-    #     series_dirs = [x.name for x in study.path.glob('Series*')]
-    #
-    #     for series in series_dirs:
-    #         run, series_name = re.match(series_pattern, series).groups()
-    #         output_dir = None
-    #
-    #         dict_match = [x for x in self.bids_dict.chain_dict if series_name.startswith(x)]
-    #         if dict_match:
-    #             if len(dict_match) > 1:
-    #                 print(f'multiple matches for {series_name}, taking first match')
-    #
-    #             echain = bids_dict.chain_dict[dict_match[0]]
-    #
-    #             if 'ses' in echain.chain:
-    #                 output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
-    #             else:
-    #                 output_dir = subj_dir / echain.datatype
-    #
-    #             echain.chain['run'] = '{:02d}'.format(int(run))
-    #             format_string = echain.get_format_string().format(name)
-    #
-    #             if not os.path.exists(output_dir):
-    #                 os.makedirs(output_dir)
-    #
-    #             command += 'dcm2niix -ba n -l o -o "{}" -f {} {} "{}"\n'.format(output_dir,
-    #                                                                             format_string, dcm2niix_flags,
-    #                                                                             os.path.join(subjectdir, series))
-    #
-    #             json_file = os.path.join(output_dir, format_string + '.json')
-    #             if 'task' in echain.chain:
-    #                 command += fix_json(json_file, 'TaskName', echain.chain['task'])
-    #
-    #             if json_mod:
-    #                 for key in json_mod:
-    #                     command += fix_json(json_file, key, json_mod[key])
-    #
-    #             if echain.datatype == 'dwi':
-    #                 command += fix_dwi_files(output_dir)
+
+    # todo, add versions to generated by
+    def write_description(self, json_data=None):
+        description_file = self.bids_path / 'dataset_description.json'
+
+        if description_file.exists():
+            with open(description_file) as f:
+                j = json.load(f)
+        else:
+            j = dict()
+
+        j['BIDSVersion'] = '1.8.0'
+        j['GeneratedBy'] = [{'Name': 'dcm2niix'}, {'Name': 'mrpyconvert'}]
+        if 'ReferencesAndLinks' not in j:
+            j['ReferencesAndLinks'] = []
+        dcm2niix_ref = 'Li X, Morgan PS, Ashburner J, Smith J, Rorden C (2016) ' \
+                       'The first step for neuroimaging data analysis: DICOM to NIfTI conversion. ' \
+                       'J Neurosci Methods. 264:47-56. doi: 10.1016/j.jneumeth.2016.03.001.'
+        if dcm2niix_ref not in j['ReferencesAndLinks']:
+            j['ReferencesAndLinks'].append(dcm2niix_ref)
+
+        if json_data:
+            j.update(json_data)
+        with open(description_file, 'w') as f:
+            json.dump(j, f, indent=4)
+
+    # todo: pick lowest age if multiples. Deal with inconsistencies?
+    def write_participants(self):
+        participants = list()
+        for study in self.all_studies:
+            # get any dicom file
+            dcmfile = next(x for x in study.path.rglob('*') if is_dicom(x))
+            ds = pydicom.dcmread(dcmfile)
+            participants.append({'Name': study.subject, 'sex': ds.PatientSex, 'age': int(ds.PatientAge[:-1])})
+            print(participants)
 
 
 class EntityChain:
@@ -260,7 +304,10 @@ class EntityChain:
 
         self.datatype = datatype
         self.suffix = suffix
-        self.chain = chain
+        if chain:
+            self.chain = chain
+        else:
+            self.chain = {}
 
     def __repr__(self):
         return_string = 'datatype: {}, suffix: {}, entities: {}'.format(self.datatype, self.suffix, self.chain)
@@ -280,16 +327,24 @@ class EntityChain:
         return self.get_format_string()
 
 
-# todo: autosession
 # explains how to map from series names to bids entries
 class BidsDict:
     def __init__(self, autosession=False):
         self.chain_dict = dict()
+        self.json = dict()
         self.autosession = autosession
 
-    def add(self, series_description, datatype, suffix, chain: dict = None, nonstandard=False, index=0):
+    def add(self, series_description, datatype, suffix, chain: dict = None, json=None, nonstandard=False, index=0):
+        if not chain:
+            chain = {}
+        if self.autosession and 'ses' not in chain:
+            chain['ses'] = '${session}'
         self.chain_dict[(series_description, index)] = EntityChain(datatype=datatype, suffix=suffix,
                                                                    nonstandard=nonstandard, chain=chain)
+        if json:
+            self.json[(series_description, index)] = json
+        else:
+            self.json[(series_description, index)] = {}
 
     def __str__(self):
         return_string = str()
@@ -302,21 +357,6 @@ class BidsDict:
         for series, index in self.chain_dict:
             return_string += '{}: {}\n'.format(series, self.chain_dict[(series, index)].__repr__())
         return return_string
-
-
-def write_description(subjectdir, bidsdir):
-    description_file = os.path.join(bidsdir, 'dataset_description.json')
-
-    if not os.path.exists(description_file):
-        projectname = os.path.basename(os.path.dirname(subjectdir))
-        j = {'Name': projectname, 'BIDSVersion': '1.3.0', 'Authors': get_authors(subjectdir),
-             'Acknowledgements': 'BIDS conversion was performed using dcm2niix and mrpyconvert.',
-             'ReferencesAndLinks': [
-                 'Li X, Morgan PS, Ashburner J, Smith J, Rorden C (2016) The first step for neuroimaging data '
-                 'analysis: DICOM to NIfTI conversion. J Neurosci Methods. 264:47-56. doi: '
-                 '10.1016/j.jneumeth.2016.03.001.']}
-        with open(description_file, 'w') as f:
-            json.dump(j, f)
 
 
 # todo: how does this change with multiple sessions?
@@ -353,8 +393,7 @@ def append_participant(subjectdir, bidsdir):
             json.dump(j, f)
 
     # get any dicom file
-    dcmfile = next(x for x in glob.glob(os.path.join(subjectdir,
-                                                     'Series*', '*')) if is_dicom(x))
+    dcmfile = next(x for x in subjectdir.rglob('*') if is_dicom(x))
 
     ds = pydicom.dcmread(dcmfile)
 
@@ -364,139 +403,3 @@ def append_participant(subjectdir, bidsdir):
         writer.writerow({'participant_id': 'sub-{}'.format(name),
                          'sex': ds.PatientSex, 'age': int(ds.PatientAge[:-1])})
     return
-
-
-# Given a path into the talapas dcm repo, generate a list of authors
-def get_authors(dicompath):
-    authorlist = set()  # no duplicates
-
-    # first add current user
-    user = getpass.getuser()
-    authorlist.add(pwd.getpwnam(user).pw_gecos)
-
-    # add pi from pirg if possible
-    if dicompath.startswith('/projects/lcni/dcm/'):
-        pirg = dicompath.split('/')[4]
-
-        if os.path.exists(os.path.join('/projects', pirg)):
-            pi_uid = os.stat(os.path.join('/projects', pirg)).st_uid
-            pi_name = pwd.getpwuid(pi_uid).pw_gecos
-            authorlist.add(pi_name)
-
-    return list(authorlist)
-
-
-def generate_slurm_command(subjectdir, bidsdir: Path, bids_dict, json_mod=None, dcm2niix_flags=''):
-    name = get_subject_name(subjectdir)
-
-    command = ''
-
-    subj_dir = bidsdir / f'sub-{name}'
-    series_dirs = [x.name for x in subjectdir.glob('Series*')]
-
-    for series in series_dirs:
-        run, series_name = re.match(series_pattern, series).groups()
-        output_dir = None
-
-        dict_match = [x for x in bids_dict.chain_dict if series_name.startswith(x)]
-        if dict_match:
-            if len(dict_match) > 1:
-                print(f'multiple matches for {series_name}, taking first match')
-
-            echain = bids_dict.chain_dict[dict_match[0]]
-
-            if 'ses' in echain.chain:
-                output_dir = subj_dir / 'ses-{}'.format(echain.chain['ses']) / echain.datatype
-            else:
-                output_dir = subj_dir / echain.datatype
-
-            echain.chain['run'] = '{:02d}'.format(int(run))
-            format_string = echain.get_format_string().format(name)
-
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-
-            command += 'dcm2niix -ba n -l o -o "{}" -f {} {} "{}"\n'.format(output_dir,
-                                                                            format_string, dcm2niix_flags,
-                                                                            os.path.join(subjectdir, series))
-
-            json_file = os.path.join(output_dir, format_string + '.json')
-            if 'task' in echain.chain:
-                command += fix_json(json_file, 'TaskName', echain.chain['task'])
-
-            if json_mod:
-                for key in json_mod:
-                    command += fix_json(json_file, key, json_mod[key])
-
-            if echain.datatype == 'dwi':
-                command += fix_dwi_files(output_dir)
-
-
-# returns the jq command string to add or modify a json file
-def fix_json(filename, key, value):
-    command = 'jq \'.{1}="{2}"\' {0} > /tmp/{3}\n'.format(filename, key, value, os.path.basename(filename))
-    command += 'mv /tmp/{} {}\n'.format(os.path.basename(filename), filename)
-    return (command)
-
-
-# returns the command string to rename bval and bvecs files
-def fix_dwi_files(dirname):
-    command = 'for x in {}/*dwi.bv*\n'.format(dirname)
-    command += 'do mv $x ${x//dwi.}\n'
-    command += 'done\n'
-    return (command)
-
-
-# usual things wrong in lcni dicoms pre 4/30/2020
-lcni_corrections = {'InstitutionName': 'University of Oregon', 'InstitutionalDepartmentName': 'LCNI',
-                    'InstitutionAddress': 'Franklin_Blvd_1440_Eugene_Oregon_US_97403'}
-
-
-def sort_dicoms(input_dir, output_dir, overwrite=False, preview=False, slurm=False, account=None):
-    if slurm:
-        command = 'import mrpyconvert\n'
-        command += 'mrpyconvert.SortDicoms("{}","{}", overwrite = {}, preview = {}, slurm = False)'.format(input_dir,
-                                                                                                           output_dir,
-                                                                                                           overwrite,
-                                                                                                           preview)
-
-        import slurmpy
-        filename = tempfile.NamedTemporaryFile().name
-        job = slurmpy.SlurmJob(jobname='sort', command=command, account=account)
-        job.WriteSlurmFile(filename=filename, interpreter='python')
-        return job.SubmitSlurmFile()
-
-    # Get the list of all files in directory tree at given path
-    listOfFiles = list()
-    for (dirpath, dirnames, filenames) in os.walk(input_dir):
-        listOfFiles += [os.path.join(dirpath, file) for file in filenames]
-
-    duplicates = False
-
-    for file in listOfFiles:
-        try:
-            ds = pydicom.dcmread(file)
-        except:
-            print('Unable to read as dicom: ', file)
-            continue
-
-        subject = ds.PatientName
-        date = ds.StudyDate
-        time = ds.StudyTime.split('.')[0]
-        series_no = ds.SeriesNumber
-        series_desc = ds.SeriesDescription
-
-        newname = os.path.join(output_dir, '{}_{}_{}'.format(subject, date, time),
-                               'Series_{}_{}'.format(series_no, series_desc), os.path.basename(file))
-
-        if preview:
-            print(file, '-->', newname)
-
-        elif not overwrite and os.path.exists(newname):
-            duplicates = True
-        else:
-            os.makedirs(os.path.dirname(newname), exist_ok=True)
-            shutil.copyfile(file, newname)
-
-    if duplicates:
-        print('One or more files already existing and not moved')
