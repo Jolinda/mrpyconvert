@@ -152,7 +152,7 @@ class Converter:
             paths = [str(PurePath(st.path / se).relative_to(self.dicom_path)) for (se, st) in series_to_convert]
             command = ['#!/bin/bash\n']
             if slurm:
-                command.append(f'#SBATCH --jobname={script_name}')
+                command.append(f'#SBATCH --job-name={script_name}')
                 command.append(f'#SBATCH --array=0-{len(names) - 1}')
             if additional_commands:
                 for extra_command in additional_commands:
