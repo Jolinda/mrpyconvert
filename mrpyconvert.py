@@ -128,13 +128,6 @@ class Converter:
         # if we don't write the description or participants file, we don't need this here
         self.bids_path.mkdir(exist_ok=True, parents=True)
 
-        # if description_file:
-        #     write_description(self.bids_path)
-        #
-        # for study in self.all_studies:
-        #     if participant_file:
-        #         append_participant(study.path, self.bids_path)
-
         # there will be a command list/slurm file for each series
         for series, index in self.bids_dict.chain_dict:
 
@@ -328,47 +321,3 @@ class BidsDict:
         return return_string
 
 
-# todo: how does this change with multiple sessions?
-def append_participant(subjectdir, bidsdir):
-    if not os.path.exists(bidsdir):
-        os.makedirs(bidsdir)
-
-    name = get_subject_name(subjectdir)
-    # check for name in .tsv first
-    part_file = os.path.join(bidsdir, 'participants.tsv')
-
-    if os.path.exists(part_file):
-        with open(part_file) as tsvfile:
-            reader = csv.DictReader(tsvfile, dialect='excel-tab')
-
-            # get the field name
-            fieldnames = reader.fieldnames
-
-            subjects = [row['participant_id'] for row in reader]
-        # return if this subject is already there
-        if 'sub-{}'.format(name) in subjects:
-            return
-
-    else:  # create new tsv/json files
-        fieldnames = ['participant_id', 'age', 'sex']
-        with open(part_file, 'w') as tsvfile:
-            writer = csv.DictWriter(tsvfile, fieldnames, dialect='excel-tab',
-                                    extrasaction='ignore')
-            writer.writeheader()
-        json_file = os.path.join(bidsdir, 'participants.json')
-        j = {'age': {'Description': 'age of participant', 'Units': 'years'},
-             'sex': {'Description': 'sex of participant', 'Levels': {'M': 'male', 'F': 'female', 'O': 'other'}}}
-        with open(json_file, 'w') as f:
-            json.dump(j, f)
-
-    # get any dicom file
-    dcmfile = next(x for x in subjectdir.rglob('*') if is_dicom(x))
-
-    ds = pydicom.dcmread(dcmfile)
-
-    with open(part_file, 'a') as tsvfile:
-        writer = csv.DictWriter(tsvfile, fieldnames, dialect='excel-tab',
-                                extrasaction='ignore')
-        writer.writerow({'participant_id': 'sub-{}'.format(name),
-                         'sex': ds.PatientSex, 'age': int(ds.PatientAge[:-1])})
-    return
