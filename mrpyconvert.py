@@ -77,15 +77,6 @@ class Series:
         self.chain = chain
         self.strict = strict
         self.json_entries = json_entries
-        if not nonstandard:
-            if datatype not in datatypes:
-                raise ValueError('Unknown data type {}'.format(datatype))
-
-            if suffix not in suffixes[datatype]:
-                error_string = 'Unknown suffix {} for data type {}\n'.format(suffix, datatype)
-                error_string += 'Allowed suffixes are {}'.format(suffixes[datatype])
-                raise ValueError(error_string)
-
         self.datatype = datatype
         self.suffix = suffix
 
@@ -230,11 +221,21 @@ class Converter:
                    json_fields=None, nonstandard=False, index=0, strict=True):
         if not chain:
             chain = {}
+
         if self.autosession and 'ses' not in chain:
             chain['ses'] = '${session}'
 
         if not json_fields:
             json_fields = {}
+
+        if not nonstandard:
+            if datatype not in datatypes:
+                raise ValueError('Unknown data type {}'.format(datatype))
+
+            if suffix not in suffixes[datatype]:
+                error_string = 'Unknown suffix {} for data type {}\n'.format(suffix, datatype)
+                error_string += 'Allowed suffixes are {}'.format(suffixes[datatype])
+                raise ValueError(error_string)
 
         self.series.append(Series(description=series_description,
                                   index=index,
