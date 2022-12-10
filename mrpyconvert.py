@@ -8,7 +8,6 @@ from pydicom.errors import InvalidDicomError
 
 # todo: a preview function!
 # todo: auto run numbers?
-# todo: need an exact match option (or just go back to that)
 
 # valid datatype information
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
@@ -30,17 +29,14 @@ subject_pattern = re.compile('(.*)_([0-9]{8})(.*)')
 series_pattern = re.compile('.*Series_([0-9]*)_(.*)')
 
 
-# todo: read more info from dicoms instead of from directory names?
-# would still assume sorted by subject/series but no assumption about directory names
-# could be slower
-def is_dicom(filename):
+def read_dicom(filename):
     if not Path(filename).exists() or not Path(filename).is_file():
         return False
     try:
-        pydicom.dcmread(filename)
+        dcm = pydicom.dcmread(filename)
     except pydicom.errors.InvalidDicomError:
         return False
-    return True
+    return dcm
 
 
 def get_series_names(directory):
@@ -66,19 +62,24 @@ def get_date(directory):
 
 # directory is a string
 def get_series_number(directory):
-    return int(re.match(series_pattern, directory).group(1))
+    search = re.search(series_pattern, Path(directory).name)
+    if search:
+        return search.group(1)
+    else:
+        return None
 
 
-class Series:
-    def __init__(self, description: str, index: int, chain: dict, strict: bool, json_entries: dict,
-                 nonstandard: bool, suffix: str, datatype: str):
+class Entity:
+    def __init__(self, description: str, index: int, chain: dict, json_entries: dict,
+                 nonstandard: bool, suffix: str, datatype: str, search: str):
         self.description = description
         self.index = index
         self.chain = chain
-        self.strict = strict
+        self.search = search
         self.json_entries = json_entries
         self.datatype = datatype
         self.suffix = suffix
+        self.nonstandard = nonstandard
 
     def get_format_string(self):
         format_string = 'sub-${name}_'
@@ -91,60 +92,90 @@ class Series:
         return format_string
 
 
+class Series:
+    def __init__(self, series_path: Path):
+        self.path = series_path
+        try:
+            example_dicom = next(x for x in map(read_dicom, series_path.iterdir()) if x)
+            self.has_dicoms = True
+        except StopIteration:
+            self.has_dicoms = False
+
+        if self.has_dicoms:
+            self.uid = example_dicom.SeriesInstanceUID
+            self.series_number = example_dicom.SeriesNumber
+            self.series_description = example_dicom.SeriesDescription
+            self.study_uid = example_dicom.StudyInstanceUID
+            self.subject = str(example_dicom.PatientName)
+            self.date = example_dicom.StudyDate
+            self.session = None
+
+
+# todo: this will go away
 class Study:
     def __init__(self, study_path: Path):
         self.path = study_path
         self.subject = get_subject_name(study_path)
         self.date = get_date(study_path)
-        # self.series = os.listdir(study_path)
-        self.series_names = [re.match(series_pattern, x.name).group(2) for x in study_path.rglob('Series*')]
+        # self.series_paths = os.listdir(study_path)
+        # self.series_names = [re.match(series_pattern, x.name).group(2) for x in study_path.rglob('Series*')]
         # self.series = [x for x in study_path.rglob('Series*')]
         self.session = None
 
 
 class Converter:
-    def __init__(self, dicom_path, bids_path, autosession=False):
-        self.dicom_path = Path(dicom_path)
+    def __init__(self, bids_path, autosession=False):
         self.bids_path = Path(bids_path)
-        self.all_studies = None
         self.autosession = autosession
         self.series = []
+        self.entities = []
 
-        study_dirs = [Path(root) for root, dirs, files in os.walk(dicom_path)
-                      if re.match(subject_pattern, Path(root).name)]
-        if not study_dirs:
-            print('No study directories found, dicoms not sorted')
+    def add_dicoms(self, dicom_path):
+        series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path) if not dirs]
+        found_series = [Series(s) for s in series_paths]
+
+        if not found_series:
+            print('No dicoms found')
             return
+        else:
+            self.series.extend(found_series)
 
-        self.all_studies = [Study(sd) for sd in study_dirs]
-
-        all_subjects = {x.subject for x in self.all_studies}
-        if autosession:
+        # assign session numbers to series objects using relative study uids
+        # I am assuming these sort chronologically! Could use date_time
+        if self.autosession:
+            all_subjects = {x.subject for x in self.series}
             for subject in all_subjects:
-                studies = sorted([s for s in self.all_studies if s.subject == subject],
-                                 key=lambda x: x.date)
-                for i, study in enumerate(studies):
-                    self.all_studies[self.all_studies.index(study)].session = i + 1
+                s_series = [s for s in self.series if s.subject == subject]
+                studies = sorted({s.study_uid for s in s_series})
+                for s in s_series:
+                    s.session = studies.index(s.study_uid) + 1
 
-    def analyze(self):
-        all_subjects = {x.subject for x in self.all_studies}
+    def inspect(self):
+        all_subjects = {x.subject for x in self.series}
+        all_studies = {x.study_uid for x in self.series}
         n_subjects = len(all_subjects)
-        n_studies = len(self.all_studies)
+        n_studies = len(all_studies)
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
         print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
 
-        all_series = {series for study in self.all_studies for series in study.series_names}
+        all_series = {s.series_description for s in self.series}
 
         print('\n'.join(sorted(all_series)))
-        for series in sorted(all_series):
-            for study in self.all_studies:
-                count = len([s for s in study.series_names if s.endswith(series)])
-                if count > 1:
-                    print(f'{count} {series} found in {study.path.name}')
 
-    def generate_scripts(self, script_ext='.sh', script_path=os.getcwd(), slurm=False, additional_commands=None):
-        if not self.all_studies:
+        for series in all_series:
+            duplicate_flag = False
+            for study in all_studies:
+                count = len([s for s in self.series if s.series_description == series and s.study_uid == study])
+                if count > 1:
+                    duplicate_flag = True
+                    continue
+            if duplicate_flag:
+                print(f'More than one copy of {series} for at least one study')
+
+    def generate_scripts(self, script_ext='.sh', script_path=os.getcwd(), slurm=False, additional_commands=None,
+                         script_prefix=None):
+        if not self.series:
             print('Nothing to convert')
             return
 
@@ -152,29 +183,37 @@ class Converter:
         # self.bids_path.mkdir(exist_ok=True, parents=True)
 
         # there will be a command list/slurm file for each series
-        for series in self.series:
-            if series.index:
-                studies_to_convert = [st for st in self.all_studies if
-                                      any(series.description in s for s in st.series_names)]
-                series_to_convert = []
-                for st in studies_to_convert:
-                    sorted_series = sorted([s for s in st.series_names if series.description in s],
-                                           key=lambda x: get_series_number(x))
-                    if len(sorted_series) >= series.index:
-                        series_to_convert.append((sorted_series[series.index - 1], st))
-                script_name = f'{series.description}-{series.index}'
+        for entity in self.entities:
+            if script_prefix:
+                script_name = script_prefix + '-' + entity.description
             else:
-                if series.strict:
-                    series_to_convert = [(se, st) for st in self.all_studies for se in st.series_names if
-                                         series.description == se]
-                else:
-                    series_to_convert = [(se, st) for st in self.all_studies for se in st.series_names if
-                                         series.description in se]
-                print(series_to_convert)
-                script_name = series.description
+                script_name = entity.description
 
-            names = [st.subject for (se, st) in series_to_convert]
-            paths = [str(PurePath(st.path / se).relative_to(self.dicom_path)) for (se, st) in series_to_convert]
+            series_to_consider = [s for s in self.series if re.fullmatch(entity.search, s.series_description)]
+
+            if entity.index:
+                series_to_convert = []
+                study_uids = {s.study_uid for s in series_to_consider}
+                for study_uid in study_uids:
+                    sorted_series = sorted([s for s in series_to_consider if s.study_uid == study_uid],
+                                           key=lambda x: x.series_number)
+                    if len(sorted_series) > entity.index:
+                        series_to_convert.append(sorted_series[entity.index])
+            else:
+                series_to_convert = series_to_consider
+
+            names = [s.subject for s in series_to_convert]
+
+            # get longest common path
+            mpl = min(len(s.path.parents) for s in series_to_convert)
+            dicom_path = Path().root
+            for n in range(0, mpl):
+                common_parents = {s.path.parents[n] for s in series_to_convert}
+                if len(common_parents) == 1:
+                    dicom_path = next(iter(common_parents))
+                    break
+
+            paths = [str(PurePath(s.path).relative_to(dicom_path)) for s in series_to_convert]
             command = ['#!/bin/bash\n']
             if slurm:
                 command.append(f'#SBATCH --job-name={script_name}')
@@ -183,12 +222,12 @@ class Converter:
                 for extra_command in additional_commands:
                     command.append(extra_command)
 
-            command.append(f'dicom_path={self.dicom_path}')
+            command.append(f'dicom_path={dicom_path}')
             command.append(f'bids_path={self.bids_path}')
             command.append('names=({})'.format(' '.join(names)))
-            sessions = [str(st.session) for (se, st) in series_to_convert]
+            sessions = [s.session for s in series_to_convert]
             if any(sessions):
-                command.append('sessions=({})'.format(' '.join(sessions)))
+                command.append('sessions=({})'.format(' '.join([str(s) for s in sessions])))
             command.append('input_dirs=({})'.format(' \\\n            '.join(paths)))
             command.append('\n')
 
@@ -199,12 +238,12 @@ class Converter:
                     command.append('session=${sessions[$SLURM_ARRAY_TASK_ID]}')
             else:
                 command.append('for i in "${!names[@]}"; do')
-                command.append('name=${names[$i]}')
-                command.append('input_dir=${input_dirs[$i]}')
+                command.append('  name=${names[$i]}')
+                command.append('  input_dir=${input_dirs[$i]}')
                 if any(sessions):
-                    command.append('session=${sessions[$i]}')
+                    command.append('  session=${sessions[$i]}')
 
-            command.extend(self.generate_commands(series))
+            command.extend(self.generate_commands(entity))
 
             if not slurm:
                 command.append('done')
@@ -217,16 +256,19 @@ class Converter:
                     f.write(line)
                     f.write('\n')
 
-    def add_series(self, series_description, datatype, suffix, chain: dict = None,
-                   json_fields=None, nonstandard=False, index=0, strict=True):
+    def add_entity(self, name, datatype, suffix, chain: dict = None, search=None,
+                   json_entries=None, nonstandard=False, index=None):
         if not chain:
             chain = {}
 
         if self.autosession and 'ses' not in chain:
             chain['ses'] = '${session}'
 
-        if not json_fields:
-            json_fields = {}
+        if not json_entries:
+            json_entries = {}
+
+        if not search:
+            search = name
 
         if not nonstandard:
             if datatype not in datatypes:
@@ -237,155 +279,73 @@ class Converter:
                 error_string += 'Allowed suffixes are {}'.format(suffixes[datatype])
                 raise ValueError(error_string)
 
-        self.series.append(Series(description=series_description,
-                                  index=index,
-                                  datatype=datatype,
-                                  suffix=suffix,
-                                  nonstandard=nonstandard,
-                                  chain=chain,
-                                  strict=strict,
-                                  json_entries=json_fields))
+        self.entities.append(Entity(description=name,
+                                    index=index,
+                                    datatype=datatype,
+                                    suffix=suffix,
+                                    nonstandard=nonstandard,
+                                    chain=chain,
+                                    search=search,
+                                    json_entries=json_entries))
 
-    def generate_commands(self, series: Series, dcm2niix_flags=''):
+    def generate_commands(self, entity: Entity, dcm2niix_flags=''):
 
         command = []
         subj_dir = Path('sub-${name}')
 
-        if 'ses' in series.chain:
-            output_dir = subj_dir / 'ses-{}'.format(series.chain['ses']) / series.datatype
+        if 'ses' in entity.chain:
+            output_dir = subj_dir / 'ses-{}'.format(entity.chain['ses']) / entity.datatype
         elif self.autosession:
-            output_dir = subj_dir / 'ses-${session}' / series.datatype
+            output_dir = subj_dir / 'ses-${session}' / entity.datatype
         else:
-            output_dir = subj_dir / series.datatype
+            output_dir = subj_dir / entity.datatype
 
-        format_string = series.get_format_string()
-        command.append(f'mkdir --parents "${{bids_path}}/{output_dir}"')
+        format_string = entity.get_format_string()
+        command.append(f'  mkdir --parents "${{bids_path}}/{output_dir}"')
         command.append(
-            f'dcmoutput=$(dcm2niix -ba n -l o -o "${{bids_path}}/{output_dir}" -f "{format_string}" {dcm2niix_flags} '
+            f'  dcmoutput=$(dcm2niix -ba n -l o -o "${{bids_path}}/{output_dir}" -f "{format_string}" {dcm2niix_flags} '
             '${dicom_path}/${input_dir})')
-        command.append('echo "${dcmoutput}"')
+        command.append('  echo "${dcmoutput}"')
 
-        if series.json_entries or (series.datatype == 'fmap' and series.suffix == 'auto'):
-            command.append('\n# get names of converted files')
-            command.append('if grep -q Convert <<< ${dcmoutput} ')
-            command.append('  then tmparray=($(echo "${dcmoutput}" | grep Convert ))')
-            command.append('  output_files=()')
-            command.append('  for ((i=4; i<${#tmparray[@]}; i+=6)); do output_files+=("${tmparray[$i]}"); done')
-            command.append('  for output_file in ${output_files[@]}; do')
+        if entity.json_entries or (entity.datatype == 'fmap' and entity.suffix == 'auto'):
+            command.append('\n  # get names of converted files')
+            command.append('  if grep -q Convert <<< ${dcmoutput}; then ')
+            command.append('    tmparray=($(echo "${dcmoutput}" | grep Convert ))')
+            command.append('    output_files=()')
+            command.append('    for ((i=4; i<${#tmparray[@]}; i+=6)); do output_files+=("${tmparray[$i]}"); done')
+            command.append('    for output_file in ${output_files[@]}; do')
 
-            if series.json_entries:
-                jq_command = '    jq \''
-                jq_command += '|'.join([f'.{k} = "{v}"' for k, v in series.json_entries.items()])
+            if entity.json_entries:
+                jq_command = '      jq \''
+                jq_command += '|'.join([f'.{k} = "{v}"' for k, v in entity.json_entries.items()])
                 jq_command += '\' ${output_file}.json > ${output_file}.tmp '
-                command.append('\n# add fields to json file(s)')
+                command.append('\n      # add fields to json file(s)')
                 command.append(jq_command)
-                command.append('    mv ${output_file}.tmp ${output_file}.json')
+                command.append('      mv ${output_file}.tmp ${output_file}.json')
 
-            if series.datatype == 'fmap' and series.suffix == 'auto':
-                command.append('\n# rename fieldmap file(s)')
-                command.append('    for filename in ${output_file}*; do')
-                command.append('      newname=${output_file}')
-                command.append('      if [[ ${filename} =~ "auto_e1" ]]; then')
-                command.append('        newname=$(echo ${filename}|sed "s:auto_e1:magnitude1:g"); fi')
-                command.append('      if [[ ${filename} =~ "auto_e2" ]]; then')
-                command.append('        newname=$(echo ${filename}|sed "s:auto_e2:magnitude2:g"); fi')
-                command.append('      if [[ ${filename} =~ "auto_e2_ph" ]]; then')
-                command.append('        newname=$(echo ${filename}|sed "s:auto_e2_ph:phasediff:g"); fi')
-                command.append('      mv ${filename} ${newname}')
-                command.append('    done')
+            if entity.datatype == 'fmap' and entity.suffix == 'auto':
+                command.append('\n#   rename fieldmap file(s)')
+                command.append('      for filename in ${output_file}*; do')
+                command.append('        newname=${output_file}')
+                command.append('        if [[ ${filename} =~ "auto_e1" ]]; then')
+                command.append('          newname=$(echo ${filename}|sed "s:auto_e1:magnitude1:g"); fi')
+                command.append('        if [[ ${filename} =~ "auto_e2" ]]; then')
+                command.append('          newname=$(echo ${filename}|sed "s:auto_e2:magnitude2:g"); fi')
+                command.append('        if [[ ${filename} =~ "auto_e2_ph" ]]; then')
+                command.append('          newname=$(echo ${filename}|sed "s:auto_e2_ph:phasediff:g"); fi')
+                command.append('        mv ${filename} ${newname}')
+                command.append('      done')
 
             command.append('  done')
             command.append('fi')
 
-        if series.datatype == 'dwi':
-            command.append('\n# rename bvecs and bvals files')
-            command.append(f'  for x in ${{bids_path}}/{output_dir}/*dwi.bv*')
-            command.append('    do mv $x ${x//dwi.}')
-            command.append('done')
+        if entity.datatype == 'dwi':
+            command.append('\n#   rename bvecs and bvals files')
+            command.append(f'    for x in ${{bids_path}}/{output_dir}/*dwi.bv*')
+            command.append('      do mv $x ${x//dwi.}')
+            command.append('  done')
 
         return command
-
-
-# moving into Series class
-# class EntityChain:
-#     def __init__(self, datatype, suffix, chain: dict = None, nonstandard=False):
-#
-#         if not nonstandard:
-#             if datatype not in datatypes:
-#                 raise ValueError('Unknown data type {}'.format(datatype))
-#
-#             if suffix not in suffixes[datatype]:
-#                 error_string = 'Unknown suffix {} for data type {}\n'.format(suffix, datatype)
-#                 error_string += 'Allowed suffixes are {}'.format(suffixes[datatype])
-#                 raise ValueError(error_string)
-#
-#         self.datatype = datatype
-#         self.suffix = suffix
-#         self.strict = strict
-#         if chain:
-#             self.chain = chain
-#         else:
-#             self.chain = {}
-#
-#     def __repr__(self):
-#         return_string = 'datatype: {}, suffix: {}, entities: {}'.format(self.datatype, self.suffix, self.chain)
-#         return return_string
-#
-#     def get_format_string(self):
-#         format_string = 'sub-${name}_'
-#         if self.chain:
-#             for key, value in [(k, self.chain[k]) for k in entities if k in self.chain]:
-#                 format_string += '{}-{}_'.format(key, value)
-#
-#         format_string += '{}'.format(self.suffix)
-#
-#         return format_string
-#
-#     def __str__(self):
-#         return self.get_format_string()
-#
-#
-# # not used yet, may delete
-# class BidsEntry:
-#     def __init(self, chain: dict, json_fields, nonstandard, strict_match):
-#         self.chain = chain
-#         self.json_fields = json_fields
-#         self.nonstandard = nonstandard
-#         self.strict_match = strict_match
-#
-#
-# # not needed, move all into converter
-# # explains how to map from series names to bids entries
-# class BidsMapping:
-#     def __init__(self, autosession=False):
-#         self.chain_dict = dict()
-#         self.json = dict()
-#         self.autosession = autosession
-#
-#     def add(self, series_description, datatype, suffix, chain: dict = None, json_fields=None, nonstandard=False,
-#             index=0, strict=True):
-#         if not chain:
-#             chain = {}
-#         if self.autosession and 'ses' not in chain:
-#             chain['ses'] = '${session}'
-#         self.chain_dict[(series_description, index)] = EntityChain(datatype=datatype, suffix=suffix,
-#                                                                    nonstandard=nonstandard, chain=chain)
-#         if json_fields:
-#             self.json[(series_description, index)] = json_fields
-#         else:
-#             self.json[(series_description, index)] = {}
-#
-#     def __str__(self):
-#         return_string = str()
-#         for series, index in self.chain_dict:
-#             return_string += '{}: {}\n'.format(series, self.chain_dict[(series, index)])
-#         return return_string
-#
-#     def __repr__(self):
-#         return_string = str()
-#         for series, index in self.chain_dict:
-#             return_string += '{}: {}\n'.format(series, self.chain_dict[(series, index)].__repr__())
-#         return return_string
 
 
 def amend_phasediffs(bidsdir):
