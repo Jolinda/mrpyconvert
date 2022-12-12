@@ -111,17 +111,6 @@ class Series:
             self.session = None
 
 
-# todo: this will go away
-class Study:
-    def __init__(self, study_path: Path):
-        self.path = study_path
-        self.subject = get_subject_name(study_path)
-        self.date = get_date(study_path)
-        # self.series_paths = os.listdir(study_path)
-        # self.series_names = [re.match(series_pattern, x.name).group(2) for x in study_path.rglob('Series*')]
-        # self.series = [x for x in study_path.rglob('Series*')]
-        self.session = None
-
 
 class Converter:
     def __init__(self, bids_path, autosession=False):
