@@ -131,7 +131,7 @@ class Converter:
         self.entities = []
 
     def add_dicoms(self, dicom_path):
-        series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path) if not dirs]
+        series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
         found_series = [Series(s) for s in series_paths]
 
         if not found_series:
@@ -201,6 +201,10 @@ class Converter:
                         series_to_convert.append(sorted_series[entity.index])
             else:
                 series_to_convert = series_to_consider
+
+            if not series_to_convert:
+                print(f'No matching dicoms found for {entity.search}')
+                continue
 
             names = [s.subject for s in series_to_convert]
 
