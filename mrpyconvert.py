@@ -39,34 +39,34 @@ def read_dicom(filename):
     return dcm
 
 
-def get_series_names(directory):
-    return set([re.match(series_pattern, x.name).group(2) for x in Path(directory).rglob('Series*')])
+# def get_series_names(directory):
+#     return set([re.match(series_pattern, x.name).group(2) for x in Path(directory).rglob('Series*')])
+#
+#
+# def get_subject_name(directory):
+#     search = re.search(subject_pattern, Path(directory).name)
+#     if search:
+#         name = search.group(1)
+#         return re.sub('[^0-9a-zA-Z]+', '', name)
+#     else:
+#         return None
 
 
-def get_subject_name(directory):
-    search = re.search(subject_pattern, Path(directory).name)
-    if search:
-        name = search.group(1)
-        return re.sub('[^0-9a-zA-Z]+', '', name)
-    else:
-        return None
-
-
-def get_date(directory):
-    search = re.search(subject_pattern, Path(directory).name)
-    if search:
-        return search.group(2)
-    else:
-        return None
+# def get_date(directory):
+#     search = re.search(subject_pattern, Path(directory).name)
+#     if search:
+#         return search.group(2)
+#     else:
+#         return None
 
 
 # directory is a string
-def get_series_number(directory):
-    search = re.search(series_pattern, Path(directory).name)
-    if search:
-        return search.group(1)
-    else:
-        return None
+# def get_series_number(directory):
+#     search = re.search(series_pattern, Path(directory).name)
+#     if search:
+#         return search.group(1)
+#     else:
+#         return None
 
 
 class Entity:
@@ -109,6 +109,7 @@ class Series:
             self.subject = str(example_dicom.PatientName)
             self.date = example_dicom.StudyDate
             self.session = None
+            self.image_type = example_dicom.ImageType
 
 
 
