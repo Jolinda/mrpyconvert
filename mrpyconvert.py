@@ -7,7 +7,6 @@ import pydicom
 from pydicom.errors import InvalidDicomError
 
 # todo: a preview function!
-# todo: auto run numbers?
 
 # valid datatype information
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
@@ -25,10 +24,6 @@ suffixes['dwi'] = ['dwi', 'bvec', 'bval']
 suffixes['func'] = ['bold', 'cbv', 'phase', 'sbref', 'events', 'physio', 'stim']
 suffixes['perf'] = ['asl', 'm0scan']
 
-subject_pattern = re.compile('(.*)_([0-9]{8})(.*)')
-series_pattern = re.compile('.*Series_([0-9]*)_(.*)')
-
-
 def read_dicom(filename):
     if not Path(filename).exists() or not Path(filename).is_file():
         return False
@@ -37,36 +32,6 @@ def read_dicom(filename):
     except pydicom.errors.InvalidDicomError:
         return False
     return dcm
-
-
-# def get_series_names(directory):
-#     return set([re.match(series_pattern, x.name).group(2) for x in Path(directory).rglob('Series*')])
-#
-#
-# def get_subject_name(directory):
-#     search = re.search(subject_pattern, Path(directory).name)
-#     if search:
-#         name = search.group(1)
-#         return re.sub('[^0-9a-zA-Z]+', '', name)
-#     else:
-#         return None
-
-
-# def get_date(directory):
-#     search = re.search(subject_pattern, Path(directory).name)
-#     if search:
-#         return search.group(2)
-#     else:
-#         return None
-
-
-# directory is a string
-# def get_series_number(directory):
-#     search = re.search(series_pattern, Path(directory).name)
-#     if search:
-#         return search.group(1)
-#     else:
-#         return None
 
 
 class Entity:
@@ -140,28 +105,34 @@ class Converter:
                 for s in s_series:
                     s.session = studies.index(s.study_uid) + 1
 
-    def inspect(self):
-        all_subjects = {x.subject for x in self.series}
-        all_studies = {x.study_uid for x in self.series}
+    def inspect(self, dicom_path=None):
+        if not dicom_path:
+            all_series = self.series
+        else:
+            series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
+            all_series = [Series(s) for s in series_paths]
+
+        all_subjects = {x.subject for x in all_series}
+        all_studies = {x.study_uid for x in all_series}
         n_subjects = len(all_subjects)
         n_studies = len(all_studies)
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
         print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
 
-        all_series = {s.series_description for s in self.series}
+        descriptions = {s.series_description for s in all_series}
 
-        print('\n'.join(sorted(all_series)))
+        print('\n'.join(sorted(descriptions)))
 
-        for series in all_series:
+        for description in descriptions:
             duplicate_flag = False
             for study in all_studies:
-                count = len([s for s in self.series if s.series_description == series and s.study_uid == study])
+                count = len([s for s in all_series if s.series_description == description and s.study_uid == study])
                 if count > 1:
                     duplicate_flag = True
                     continue
             if duplicate_flag:
-                print(f'More than one copy of {series} for at least one study')
+                print(f'More than one copy of {description} for at least one study')
 
     def generate_scripts(self, script_ext='.sh', script_path=os.getcwd(), slurm=False, additional_commands=None,
                          script_prefix=None):
