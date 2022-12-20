@@ -79,8 +79,7 @@ class Series:
 
 
 class Converter:
-    def __init__(self, bids_path, autosession=False):
-        self.bids_path = Path(bids_path)
+    def __init__(self, autosession=False):
         self.autosession = autosession
         self.series = []
         self.entities = []
@@ -134,8 +133,10 @@ class Converter:
             if duplicate_flag:
                 print(f'More than one copy of {description} for at least one study')
 
-    def generate_scripts(self, script_ext='.sh', script_path=os.getcwd(), slurm=False, additional_commands=None,
-                         script_prefix=None):
+    def generate_scripts(self, bids_path, script_ext='.sh', script_path=os.getcwd(), slurm=False,
+                         additional_commands=None, script_prefix=None):
+
+        self.bids_path = Path(bids_path)
         if not self.series:
             print('Nothing to convert')
             return
@@ -313,8 +314,8 @@ class Converter:
         return command
 
 
-def amend_phasediffs(bidsdir):
-    phasediff_jsons = Path(bidsdir).rglob('*phasediff*.json')
+def amend_phasediffs(bids_path):
+    phasediff_jsons = Path(bids_path).rglob('*phasediff*.json')
     for pdfile in phasediff_jsons:
         print(pdfile)
         e1file = pdfile.parent / pdfile.name.replace('phasediff', 'magnitude1')
