@@ -3,6 +3,7 @@ import json
 import os
 import csv
 from pathlib import Path, PurePath
+from itertools import groupby
 import pydicom
 from pydicom.errors import InvalidDicomError
 
@@ -36,7 +37,7 @@ def read_dicom(filename):
 
 class Entity:
     def __init__(self, description: str, index: int, chain: dict, json_entries: dict,
-                 nonstandard: bool, suffix: str, datatype: str, search: str):
+                 nonstandard: bool, suffix: str, datatype: str, search: str, autorun: bool):
         self.description = description
         self.index = index
         self.chain = chain
@@ -45,6 +46,7 @@ class Entity:
         self.datatype = datatype
         self.suffix = suffix
         self.nonstandard = nonstandard
+        self.autorun = autorun
 
     def get_format_string(self):
         format_string = 'sub-${name}_'
@@ -96,7 +98,10 @@ class Converter:
 
         # assign session numbers to series objects using relative study uids
         # I am assuming these sort chronologically! Could use date_time
+        # can't use date: could have two on same day
+        # todo: move to script generation, maybe use itertools
         if self.autosession:
+            #self.series = sorted(self.series, lambda x: (x.subject, x.study_uid))
             all_subjects = {x.subject for x in self.series}
             for subject in all_subjects:
                 s_series = [s for s in self.series if s.subject == subject]
@@ -133,6 +138,7 @@ class Converter:
             if duplicate_flag:
                 print(f'More than one copy of {description} for at least one study')
 
+
     def generate_scripts(self, bids_path, script_ext='.sh', script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
 
@@ -152,17 +158,19 @@ class Converter:
                 script_name = entity.description
 
             series_to_consider = [s for s in self.series if re.fullmatch(entity.search, s.series_description)]
+            series_to_consider = sorted(series_to_consider, key=lambda x: (x.subject, x.study_uid, x.series_number))
 
+            series_to_convert = []
             if entity.index:
-                series_to_convert = []
-                study_uids = {s.study_uid for s in series_to_consider}
-                for study_uid in study_uids:
-                    sorted_series = sorted([s for s in series_to_consider if s.study_uid == study_uid],
-                                           key=lambda x: x.series_number)
-                    if len(sorted_series) > entity.index:
-                        series_to_convert.append(sorted_series[entity.index])
+                for k, g in groupby(series_to_consider, key=lambda x: x.study_uid):
+                    if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
             else:
                 series_to_convert = series_to_consider
+
+            runs = []
+            if entity.autorun:
+                for k, g in groupby(series_to_consider, key=lambda x: x.study_uid):
+                    runs.extend([i + 1 for i,s in enumerate(g)])
 
             if not series_to_convert:
                 print(f'No matching dicoms found for {entity.search}')
@@ -194,6 +202,9 @@ class Converter:
             sessions = [s.session for s in series_to_convert]
             if any(sessions):
                 command.append('sessions=({})'.format(' '.join([str(s) for s in sessions])))
+            if any(runs):
+                command.append('runs=({})'.format(' '.join([str(r) for r in runs])))
+
             command.append('input_dirs=({})'.format(' \\\n            '.join(paths)))
             command.append('\n')
 
@@ -202,12 +213,16 @@ class Converter:
                 command.append('input_dir=${input_dirs[$SLURM_ARRAY_TASK_ID]}')
                 if any(sessions):
                     command.append('session=${sessions[$SLURM_ARRAY_TASK_ID]}')
+                if any(runs):
+                    command.append('run=${runs[$SLURM_ARRAY_TASK_ID]}')
             else:
                 command.append('for i in "${!names[@]}"; do')
                 command.append('  name=${names[$i]}')
                 command.append('  input_dir=${input_dirs[$i]}')
                 if any(sessions):
                     command.append('  session=${sessions[$i]}')
+                if any(runs):
+                    command.append('  run=${runs[$i]}')
 
             command.extend(self.generate_commands(entity))
 
@@ -223,12 +238,15 @@ class Converter:
                     f.write('\n')
 
     def add_entity(self, name, datatype, suffix, chain: dict = None, search=None,
-                   json_entries=None, nonstandard=False, index=None):
+                   json_entries=None, nonstandard=False, index=None, autorun=False):
         if not chain:
             chain = {}
 
         if self.autosession and 'ses' not in chain:
             chain['ses'] = '${session}'
+
+        if autorun and 'run' not in chain:
+            chain['run'] = '${run}'
 
         if not json_entries:
             json_entries = {}
@@ -252,7 +270,8 @@ class Converter:
                                     nonstandard=nonstandard,
                                     chain=chain,
                                     search=search,
-                                    json_entries=json_entries))
+                                    json_entries=json_entries,
+                                    autorun=autorun))
 
     def generate_commands(self, entity: Entity, dcm2niix_flags=''):
 
