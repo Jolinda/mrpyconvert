@@ -62,18 +62,14 @@ class Entity:
 class Series:
     def __init__(self, series_path: Path):
         self.path = series_path
-        try:
-            example_dicom = next(x for x in map(read_dicom, series_path.iterdir()) if x)
-            self.has_dicoms = True
-        except StopIteration:
-            self.has_dicoms = False
-
-        if self.has_dicoms:
+        example_dicom = next((x for x in map(read_dicom, series_path.iterdir()) if x), None)
+        if example_dicom:
             self.uid = example_dicom.SeriesInstanceUID
             self.series_number = example_dicom.SeriesNumber
             self.series_description = example_dicom.SeriesDescription
             self.study_uid = example_dicom.StudyInstanceUID
             self.subject = str(example_dicom.PatientName)
+            self.orig_subject = self.subject
             self.date = example_dicom.StudyDate
             self.session = None
             self.image_type = example_dicom.ImageType
@@ -123,9 +119,8 @@ class Converter:
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
         print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
-
+        print(' '.join(sorted(all_subjects)))
         descriptions = {s.series_description for s in all_series}
-
         print('\n'.join(sorted(descriptions)))
 
         for description in descriptions:
@@ -137,6 +132,11 @@ class Converter:
                     continue
             if duplicate_flag:
                 print(f'More than one copy of {description} for at least one study')
+
+    def set_names(self, bids_names:dict):
+        for series in self.series:
+            if series.orig_subject in bids_names:
+                series.subject = bids_names[series.orig_subject]
 
 
     def generate_scripts(self, bids_path, script_ext='.sh', script_path=os.getcwd(), slurm=False,
