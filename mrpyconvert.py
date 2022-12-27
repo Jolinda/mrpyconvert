@@ -60,7 +60,7 @@ class Entity:
 
 
 class Series:
-    def __init__(self, series_path: Path):
+    def __init__(self, series_path: Path, subject=None, session=None):
         self.path = series_path
         example_dicom = next((x for x in map(read_dicom, series_path.iterdir()) if x), None)
         if example_dicom:
@@ -68,10 +68,13 @@ class Series:
             self.series_number = example_dicom.SeriesNumber
             self.series_description = example_dicom.SeriesDescription
             self.study_uid = example_dicom.StudyInstanceUID
-            self.subject = str(example_dicom.PatientName)
-            self.orig_subject = self.subject
+            if subject:
+                self.subject = subject
+            else:
+                self.subject = str(example_dicom.PatientName)
+            self.orig_subject = str(example_dicom.PatientName)
             self.date = example_dicom.StudyDate
-            self.session = None
+            self.session = session
             self.image_type = example_dicom.ImageType
 
 
@@ -82,9 +85,9 @@ class Converter:
         self.series = []
         self.entities = []
 
-    def add_dicoms(self, dicom_path):
+    def add_dicoms(self, dicom_path, subject=None, session=None):
         series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
-        found_series = [Series(s) for s in series_paths]
+        found_series = [Series(s, subject, session) for s in series_paths]
 
         if not found_series:
             print('No dicoms found')
@@ -119,7 +122,7 @@ class Converter:
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
         print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
-        print(' '.join(sorted(all_subjects)))
+        print('Subjects: '+ ' '.join(sorted(all_subjects)))
         descriptions = {s.series_description for s in all_series}
         print('\n'.join(sorted(descriptions)))
 
