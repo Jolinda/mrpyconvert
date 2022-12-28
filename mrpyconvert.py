@@ -76,6 +76,9 @@ class Series:
             self.date = example_dicom.StudyDate
             self.session = session
             self.image_type = example_dicom.ImageType
+            self.has_dicoms = True
+        else:
+            self.has_dicoms = False
 
 
 
@@ -87,7 +90,7 @@ class Converter:
 
     def add_dicoms(self, dicom_path, subject=None, session=None):
         series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
-        found_series = [Series(s, subject, session) for s in series_paths]
+        found_series = [series for s in series_paths if (series := Series(s, subject, session)).has_dicoms]
 
         if not found_series:
             print('No dicoms found')
@@ -113,7 +116,11 @@ class Converter:
             all_series = self.series
         else:
             series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
-            all_series = [Series(s) for s in series_paths]
+            all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
+
+        if not all_series:
+            print(f'No dicoms found in {dicom_path}')
+            return
 
         all_subjects = {x.subject for x in all_series}
         all_studies = {x.study_uid for x in all_series}
@@ -208,7 +215,7 @@ class Converter:
             if any(runs):
                 command.append('runs=({})'.format(' '.join([str(r) for r in runs])))
 
-            command.append('input_dirs=({})'.format(' \\\n            '.join(paths)))
+            command.append('input_dirs=("{}")'.format('" \\\n            "'.join(paths)))
             command.append('\n')
 
             if slurm:
