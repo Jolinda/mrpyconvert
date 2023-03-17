@@ -81,7 +81,7 @@ class Series:
             self.has_dicoms = False
 
 
-
+# todo: should autosession be somewhere else?
 class Converter:
     def __init__(self, autosession=False):
         self.autosession = autosession
@@ -206,8 +206,8 @@ class Converter:
                 for extra_command in additional_commands:
                     command.append(extra_command)
 
-            command.append(f'dicom_path={dicom_path}')
-            command.append(f'bids_path={self.bids_path}')
+            command.append(f'dicom_path={dicom_path.resolve()}')
+            command.append(f'bids_path={self.bids_path.resolve()}')
             command.append('names=({})'.format(' '.join(names)))
             sessions = [s.session for s in series_to_convert]
             if any(sessions):
@@ -284,7 +284,6 @@ class Converter:
                                     autorun=autorun))
 
     def generate_commands(self, entity: Entity, dcm2niix_flags=''):
-
         command = []
         subj_dir = Path('sub-${name}')
 
