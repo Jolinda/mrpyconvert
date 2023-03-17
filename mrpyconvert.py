@@ -5,7 +5,6 @@ import csv
 import pathlib
 import itertools
 import pydicom
-from pydicom.errors import InvalidDicomError
 
 # todo: a preview function!
 
