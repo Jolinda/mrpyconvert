@@ -1,8 +1,9 @@
 import re
 import json
 import os
-from pathlib import Path, PurePath
-from itertools import groupby
+import csv
+import pathlib
+import itertools
 import pydicom
 
 # todo: a preview function!
@@ -24,7 +25,7 @@ suffixes['func'] = ['bold', 'cbv', 'phase', 'sbref', 'events', 'physio', 'stim']
 suffixes['perf'] = ['asl', 'm0scan']
 
 def read_dicom(filename):
-    if not Path(filename).exists() or not Path(filename).is_file():
+    if not pathlib.Path(filename).exists() or not pathlib.Path(filename).is_file():
         return False
     try:
         dcm = pydicom.dcmread(filename)
@@ -58,7 +59,7 @@ class Entity:
 
 
 class Series:
-    def __init__(self, series_path: Path):
+    def __init__(self, series_path: pathlib.Path, subject=None, session=None):
         self.path = series_path
         example_dicom = next((x for x in map(read_dicom, series_path.iterdir()) if x), None)
         if example_dicom:
@@ -66,23 +67,29 @@ class Series:
             self.series_number = example_dicom.SeriesNumber
             self.series_description = example_dicom.SeriesDescription
             self.study_uid = example_dicom.StudyInstanceUID
-            self.subject = str(example_dicom.PatientName)
-            self.orig_subject = self.subject
+            if subject:
+                self.subject = subject
+            else:
+                self.subject = str(example_dicom.PatientName)
+            self.orig_subject = str(example_dicom.PatientName)
             self.date = example_dicom.StudyDate
-            self.session = None
+            self.session = session
             self.image_type = example_dicom.ImageType
+            self.has_dicoms = True
+        else:
+            self.has_dicoms = False
 
 
-
+# todo: should autosession be somewhere else?
 class Converter:
     def __init__(self, autosession=False):
         self.autosession = autosession
         self.series = []
         self.entities = []
 
-    def add_dicoms(self, dicom_path):
-        series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
-        found_series = [Series(s) for s in series_paths]
+    def add_dicoms(self, dicom_path, subject=None, session=None):
+        series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
+        found_series = [series for s in series_paths if (series := Series(s, subject, session)).has_dicoms]
 
         if not found_series:
             print('No dicoms found')
@@ -107,8 +114,12 @@ class Converter:
         if not dicom_path:
             all_series = self.series
         else:
-            series_paths = [Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
-            all_series = [Series(s) for s in series_paths]
+            series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
+            all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
+
+        if not all_series:
+            print(f'No dicoms found in {dicom_path}')
+            return
 
         all_subjects = {x.subject for x in all_series}
         all_studies = {x.study_uid for x in all_series}
@@ -117,7 +128,7 @@ class Converter:
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
         print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
-        print(' '.join(sorted(all_subjects)))
+        print('Subjects: '+ ' '.join(sorted(all_subjects)))
         descriptions = {s.series_description for s in all_series}
         print('\n'.join(sorted(descriptions)))
 
@@ -140,7 +151,7 @@ class Converter:
     def generate_scripts(self, bids_path, script_ext='.sh', script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
 
-        self.bids_path = Path(bids_path)
+        self.bids_path = pathlib.Path(bids_path)
         if not self.series:
             print('Nothing to convert')
             return
@@ -160,14 +171,14 @@ class Converter:
 
             series_to_convert = []
             if entity.index:
-                for k, g in groupby(series_to_consider, key=lambda x: x.study_uid):
+                for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
                     if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
             else:
                 series_to_convert = series_to_consider
 
             runs = []
             if entity.autorun:
-                for k, g in groupby(series_to_consider, key=lambda x: x.study_uid):
+                for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
                     runs.extend([i + 1 for i,s in enumerate(g)])
 
             if not series_to_convert:
@@ -178,14 +189,14 @@ class Converter:
 
             # get longest common path
             mpl = min(len(s.path.parents) for s in series_to_convert)
-            dicom_path = Path().root
+            dicom_path = pathlib.Path().root
             for n in range(0, mpl):
                 common_parents = {s.path.parents[n] for s in series_to_convert}
                 if len(common_parents) == 1:
                     dicom_path = next(iter(common_parents))
                     break
-
-            paths = [str(PurePath(s.path).relative_to(dicom_path)) for s in series_to_convert]
+            # I had purepath here but I don't think it's needed?
+            paths = [str(pathlib.Path(s.path).relative_to(dicom_path)) for s in series_to_convert]
             command = ['#!/bin/bash\n']
             if slurm:
                 command.append(f'#SBATCH --job-name={script_name}')
@@ -194,8 +205,8 @@ class Converter:
                 for extra_command in additional_commands:
                     command.append(extra_command)
 
-            command.append(f'dicom_path={dicom_path}')
-            command.append(f'bids_path={self.bids_path}')
+            command.append(f'dicom_path={dicom_path.resolve()}')
+            command.append(f'bids_path={self.bids_path.resolve()}')
             command.append('names=({})'.format(' '.join(names)))
             sessions = [s.session for s in series_to_convert]
             if any(sessions):
@@ -203,7 +214,7 @@ class Converter:
             if any(runs):
                 command.append('runs=({})'.format(' '.join([str(r) for r in runs])))
 
-            command.append('input_dirs=({})'.format(' \\\n            '.join(paths)))
+            command.append('input_dirs=("{}")'.format('" \\\n            "'.join(paths)))
             command.append('\n')
 
             if slurm:
@@ -227,7 +238,7 @@ class Converter:
             if not slurm:
                 command.append('done')
 
-            script_name = Path(script_path) / (script_name + script_ext)
+            script_name = pathlib.Path(script_path) / (script_name + script_ext)
             print(script_name)
             # todo: write to stdout instead of file as option?
             with open(script_name, 'w') as f:
@@ -272,9 +283,8 @@ class Converter:
                                     autorun=autorun))
 
     def generate_commands(self, entity: Entity, dcm2niix_flags=''):
-
         command = []
-        subj_dir = Path('sub-${name}')
+        subj_dir = pathlib.Path('sub-${name}')
 
         if 'ses' in entity.chain:
             output_dir = subj_dir / 'ses-{}'.format(entity.chain['ses']) / entity.datatype
@@ -332,7 +342,7 @@ class Converter:
 
 
 def amend_phasediffs(bids_path):
-    phasediff_jsons = Path(bids_path).rglob('*phasediff*.json')
+    phasediff_jsons = pathlib.Path(bids_path).rglob('*phasediff*.json')
     for pdfile in phasediff_jsons:
         print(pdfile)
         e1file = pdfile.parent / pdfile.name.replace('phasediff', 'magnitude1')
