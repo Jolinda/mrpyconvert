@@ -1,7 +1,6 @@
 import re
 import json
 import os
-import csv
 import pathlib
 import itertools
 import pydicom
