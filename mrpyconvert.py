@@ -1,11 +1,9 @@
 import re
 import json
 import os
-import csv
 from pathlib import Path, PurePath
 from itertools import groupby
 import pydicom
-from pydicom.errors import InvalidDicomError
 
 # todo: a preview function!
 
