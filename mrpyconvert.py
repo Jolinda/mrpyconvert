@@ -7,21 +7,26 @@ import pydicom
 
 # todo: a preview function!
 
+# BIDS VERSION: 1.8.0
 # valid datatype information
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
 
-entities = ['ses', 'task', 'acq', 'ce', 'rec', 'dir', 'run', 'mod', 'echo', 'recording', 'proc', 'space']
+entities = ['acq', 'ce', 'chunk', 'dir', 'echo', 'flip', 'hemi', 'inv', 'mod', 'mt', 'part', 'proc', 'rec', 'recording',
+            'run', 'sample', 'ses', 'space', 'split', 'stain', 'task', 'trc']
+
 
 # valid suffixes for datatypes
 suffixes = dict()
 suffixes['anat'] = ['T1w', 'T2w', 'FLAIR', 'T1rho', 'T1map', 'T2map', 'T2starw',
                     'T2starmap', 'PDw', 'PDmap', 'PDT2', 'inplaneT1', 'inplaneT2',
-                    'angio', 'defacemask']
+                    'angio', 'defacemask', 'UNIT1']
+# auto is not a bids suffix, it's used internally by mrpyconvert
 suffixes['fmap'] = ['phasediff', 'phase1', 'phase2', 'magnitude1', 'magnitude2',
                     'magnitude', 'fieldmap', 'epi', 'auto']
-suffixes['dwi'] = ['dwi', 'bvec', 'bval']
-suffixes['func'] = ['bold', 'cbv', 'phase', 'sbref', 'events', 'physio', 'stim']
+suffixes['dwi'] = ['dwi', 'bvec', 'bval', 'sbref']
+suffixes['func'] = ['bold', 'cbv', 'sbref', 'events', 'physio', 'stim']
 suffixes['perf'] = ['asl', 'm0scan']
+
 
 def read_dicom(filename):
     if not pathlib.Path(filename).exists() or not pathlib.Path(filename).is_file():
@@ -101,7 +106,7 @@ class Converter:
         # can't use date: could have two on same day
         # todo: move to script generation, maybe use itertools
         if self.autosession:
-            #self.series = sorted(self.series, lambda x: (x.subject, x.study_uid))
+            # self.series = sorted(self.series, lambda x: (x.subject, x.study_uid))
             all_subjects = {x.subject for x in self.series}
             for subject in all_subjects:
                 s_series = [s for s in self.series if s.subject == subject]
@@ -113,7 +118,8 @@ class Converter:
         if not dicom_path:
             all_series = self.series
         else:
-            series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
+            series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if
+                            not dirs]
             all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
 
         if not all_series:
@@ -127,7 +133,7 @@ class Converter:
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
         print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
-        print('Subjects: '+ ' '.join(sorted(all_subjects)))
+        print('Subjects: ' + ' '.join(sorted(all_subjects)))
         descriptions = {s.series_description for s in all_series}
         print('\n'.join(sorted(descriptions)))
 
@@ -141,11 +147,10 @@ class Converter:
             if duplicate_flag:
                 print(f'More than one copy of {description} for at least one study')
 
-    def set_names(self, bids_names:dict):
+    def set_names(self, bids_names: dict):
         for series in self.series:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
-
 
     def generate_scripts(self, bids_path, script_ext='.sh', script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
@@ -171,14 +176,15 @@ class Converter:
             series_to_convert = []
             if entity.index:
                 for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                    if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
+                    if m := next((x for i, x in enumerate(g) if i + 1 == entity.index), None): series_to_convert.append(
+                        m)
             else:
                 series_to_convert = series_to_consider
 
             runs = []
             if entity.autorun:
                 for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                    runs.extend([i + 1 for i,s in enumerate(g)])
+                    runs.extend([i + 1 for i, s in enumerate(g)])
 
             if not series_to_convert:
                 print(f'No matching dicoms found for {entity.search}')
