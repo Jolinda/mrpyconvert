@@ -1,3 +1,3 @@
 # MrPyConvert
-Python library dicom to bids conversion  
-Requires dcm2niix
+Python module for dicom to bids conversion  
+Creates scripts that call dcm2niix
