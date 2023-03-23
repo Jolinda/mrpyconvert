@@ -97,18 +97,6 @@ class Converter:
         else:
             self.series.extend(found_series)
 
-        # assign session numbers to series objects using relative study uids
-        # I am assuming these sort chronologically! Could use date_time
-        # can't use date: could have two on same day
-        # todo: move to script generation, maybe use itertools
-        if self.autosession:
-            #self.series = sorted(self.series, lambda x: (x.subject, x.study_uid))
-            all_subjects = {x.subject for x in self.series}
-            for subject in all_subjects:
-                s_series = [s for s in self.series if s.subject == subject]
-                studies = sorted({s.study_uid for s in s_series})
-                for s in s_series:
-                    s.session = studies.index(s.study_uid) + 1
 
     def inspect(self, dicom_path=None):
         if not dicom_path:
@@ -150,6 +138,17 @@ class Converter:
 
     def generate_scripts(self, bids_path, script_ext='.sh', script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
+
+        # assign session numbers to series objects using dates
+        if self.autosession:
+            all_subjects = {x.subject for x in self.series}
+            for subject in all_subjects:
+                s_series = [s for s in self.series if s.subject == subject]
+                s_series.sort(key = lambda x: (x.date, x.study_uid))
+                # get unique values, preserving order
+                studies = list(dict.fromkeys(s.study_uid for s in s_series))
+                for s in s_series:
+                    s.session = studies.index(s.study_uid) + 1
 
         self.bids_path = pathlib.Path(bids_path)
         if not self.series:
@@ -245,6 +244,14 @@ class Converter:
                 for line in command:
                     f.write(line)
                     f.write('\n')
+
+    def set_autosession(self, autosession = True):
+        self.autosession = autosession
+        for e in self.entities:
+            if autosession:
+                e.chain['ses'] = '${session}'
+            else:
+                del e.chain['ses']
 
     def add_entity(self, name, datatype, suffix, chain: dict = None, search=None,
                    json_entries=None, nonstandard=False, index=None, autorun=False):
