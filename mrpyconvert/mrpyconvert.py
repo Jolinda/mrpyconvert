@@ -93,7 +93,9 @@ class Converter:
 
     def add_dicoms(self, dicom_path, subject=None, session=None):
         series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
-        found_series = [series for s in series_paths if (series := Series(s, subject, session)).has_dicoms]
+        # sadly I need to support python < 3.8, no walruses allowed
+        #found_series = [series for s in series_paths if (series := Series(s, subject, session)).has_dicoms]
+        found_series = [Series(s, subject, session) for s in series_paths if Series(s, subject, session).has_dicoms]
 
         if not found_series:
             print('No dicoms found')
@@ -108,7 +110,9 @@ class Converter:
         else:
             series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if
                             not dirs]
-            all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
+            #all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
+            all_series = [Series(s) for s in series_paths if Series(s).has_dicoms]
+
 
         if not all_series:
             print(f'No dicoms found in {dicom_path}')
@@ -140,9 +144,14 @@ class Converter:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
 
-    def generate_scripts(self, bids_path, script_ext='.sh', script_path=os.getcwd(), slurm=False,
+    def generate_scripts(self, bids_path, script_ext=None, script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
 
+        if not script_ext:
+            if slurm:
+                script_ext = '.srun'
+            else:
+                script_ext = '.sh'
         # assign session numbers to series objects using dates
         if self.autosession:
             all_subjects = {x.subject for x in self.series}
@@ -175,7 +184,9 @@ class Converter:
             series_to_convert = []
             if entity.index:
                 for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                    if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
+                    #if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
+                    m = next((x for i, x in enumerate(g) if i+1 == entity.index), None)
+                    if m: series_to_convert.append(m)
             else:
                 series_to_convert = series_to_consider
 
