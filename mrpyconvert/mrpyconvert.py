@@ -93,7 +93,7 @@ class Converter:
     def __init__(self, autosession=False):
         self.autosession = autosession
         self.series = []
-        self.entities = []
+        self.entities = {}
 
     def add_dicoms(self, dicom_path, subject=None, session=None):
         series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
@@ -183,7 +183,8 @@ class Converter:
         # self.bids_path.mkdir(exist_ok=True, parents=True)
 
         # there will be a command list/slurm file for each series
-        for entity in self.entities:
+        for e in self.entities:
+            entity = self.entities[e]
             if script_prefix:
                 script_name = script_prefix + '-' + entity.description
             else:
@@ -278,9 +279,9 @@ class Converter:
         self.autosession = autosession
         for e in self.entities:
             if autosession:
-                e.chain['ses'] = '${session}'
+                self.entities[e].chain['ses'] = '${session}'
             else:
-                del e.chain['ses']
+                del self.entities[e].chain['ses']
 
     def add_entity(self, name, datatype, suffix, chain: dict = None, search=None,
                    json_entries=None, nonstandard=False, index=None, autorun=False):
@@ -308,7 +309,7 @@ class Converter:
                 error_string += 'Allowed suffixes are {}'.format(suffixes[datatype])
                 raise ValueError(error_string)
 
-        self.entities.append(Entity(description=name,
+        self.entities[name] = Entity(description=name,
                                     index=index,
                                     datatype=datatype,
                                     suffix=suffix,
@@ -316,7 +317,7 @@ class Converter:
                                     chain=chain,
                                     search=search,
                                     json_entries=json_entries,
-                                    autorun=autorun))
+                                    autorun=autorun)
 
     def generate_commands(self, entity: Entity, dcm2niix_flags=''):
         command = []
