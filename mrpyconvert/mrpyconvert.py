@@ -378,8 +378,8 @@ class Converter:
                 command.append('        mv ${filename} ${newname}')
                 command.append('      done')
 
-            command.append('  done')
-            command.append('fi')
+            command.append('    done')
+            command.append('  fi')
 
         if entity.datatype == 'dwi':
             command.append('\n#   rename bvecs and bvals files')
