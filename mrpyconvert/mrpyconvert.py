@@ -148,9 +148,11 @@ class Converter:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
 
-    def convert(self, bids_path):
+    def convert(self, bids_path, entities='all'):
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_scripts = self.generate_scripts(bids_path=bids_path, script_path=tmpdir)
+            if entities != 'all':
+                temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entities]
             for ts in temp_scripts:
                 print(f'Converting {pathlib.Path(ts).name}')
                 st = os.stat(ts)
