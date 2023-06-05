@@ -88,10 +88,10 @@ class Series:
             self.has_dicoms = False
 
 
-# todo: should autosession be somewhere else?
 class Converter:
-    def __init__(self, autosession=False):
-        self.autosession = autosession
+    def __init__(self):
+        self.autosession = None
+        self.bids_path = None
         self.series = []
         self.entities = {}
 
@@ -107,6 +107,8 @@ class Converter:
         else:
             self.series.extend(found_series)
 
+    def set_bids_path(self, bids_path):
+        self.bids_path = pathlib.Path(bids_path)
 
     def inspect(self, dicom_path=None):
         if not dicom_path:
@@ -148,9 +150,12 @@ class Converter:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
 
-    def convert(self, bids_path, entities='all'):
+    def convert(self, entities='all'):
+        if not self.bids_path:
+            print('Set bids output directory first (set_bids_path)')
+            return
         with tempfile.TemporaryDirectory() as tmpdir:
-            temp_scripts = self.generate_scripts(bids_path=bids_path, script_path=tmpdir)
+            temp_scripts = self.generate_scripts(script_path=tmpdir)
             if entities != 'all':
                 temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entities]
             for ts in temp_scripts:
@@ -159,10 +164,14 @@ class Converter:
                 os.chmod(ts, st.st_mode | stat.S_IEXEC)
                 subprocess.run(ts)
 
-    def generate_scripts(self, bids_path, script_ext='', script_path=os.getcwd(), slurm=False,
+    def generate_scripts(self, script_ext='', script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
-        script_names = []
 
+        if not self.bids_path:
+            print('Set bids output directory first (set_bids_path)')
+            return
+
+        script_names = []
         # assign session numbers to series objects using dates
         if self.autosession:
             all_subjects = {x.subject for x in self.series}
@@ -174,7 +183,7 @@ class Converter:
                 for s in s_series:
                     s.session = studies.index(s.study_uid) + 1
 
-        self.bids_path = pathlib.Path(bids_path)
+
         if not self.series:
             print('Nothing to convert')
             return
