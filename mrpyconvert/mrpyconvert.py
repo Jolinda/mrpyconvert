@@ -3,9 +3,13 @@ import json
 import os
 import pathlib
 import itertools
+import stat
+import tempfile
+import subprocess
+
 import pydicom
 
-# todo: a preview function!
+# todo: a preview function?
 
 # BIDS VERSION: 1.8.0
 # valid datatype information
@@ -144,14 +148,19 @@ class Converter:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
 
-    def generate_scripts(self, bids_path, script_ext=None, script_path=os.getcwd(), slurm=False,
-                         additional_commands=None, script_prefix=None):
+    def convert(self, bids_path):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_scripts = self.generate_scripts(bids_path=bids_path, script_path=tmpdir)
+            for ts in temp_scripts:
+                print(f'Converting {pathlib.Path(ts).name}')
+                st = os.stat(ts)
+                os.chmod(ts, st.st_mode | stat.S_IEXEC)
+                subprocess.run(ts)
 
-        if not script_ext:
-            if slurm:
-                script_ext = '.srun'
-            else:
-                script_ext = '.sh'
+    def generate_scripts(self, bids_path, script_ext='', script_path=os.getcwd(), slurm=False,
+                         additional_commands=None, script_prefix=None):
+        script_names = []
+
         # assign session numbers to series objects using dates
         if self.autosession:
             all_subjects = {x.subject for x in self.series}
@@ -253,12 +262,15 @@ class Converter:
                 command.append('done')
 
             script_name = pathlib.Path(script_path) / (script_name + script_ext)
-            print(script_name)
+
             # todo: write to stdout instead of file as option?
             with open(script_name, 'w') as f:
                 for line in command:
                     f.write(line)
                     f.write('\n')
+
+            script_names.append(script_name)
+        return script_names
 
     def set_autosession(self, autosession = True):
         self.autosession = autosession
