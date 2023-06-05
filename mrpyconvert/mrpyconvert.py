@@ -171,6 +171,9 @@ class Converter:
             print('Set bids output directory first (set_bids_path)')
             return
 
+        if not script_path.exists():
+            script_path.mkdir(parents=True)
+
         script_names = []
         # assign session numbers to series objects using dates
         if self.autosession:
