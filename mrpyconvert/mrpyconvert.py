@@ -162,7 +162,7 @@ class Converter:
                 print(f'Converting {pathlib.Path(ts).name}')
                 st = os.stat(ts)
                 os.chmod(ts, st.st_mode | stat.S_IEXEC)
-                subprocess.run(ts)
+                subprocess.run(str(ts))
 
     def generate_scripts(self, script_ext='', script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
