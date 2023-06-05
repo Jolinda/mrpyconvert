@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mrpyconvert"
-version = "0.1.7"
+version = "0.1.8"
 description = "Tool to create scripts to convert dicom to bids"
 authors = ["Jolinda Smith <jolinda@uoregon.edu>"]
 license = "MIT"
@@ -9,6 +9,8 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.6.8"
 pydicom = "^2.2"
+jq = "^1.0"
+dcm2niix = "^1.0"
 
 [build-system]
 requires = ["poetry-core"]
