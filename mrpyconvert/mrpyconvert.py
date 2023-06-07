@@ -158,6 +158,9 @@ class Converter:
             temp_scripts = self.generate_scripts(script_path=tmpdir)
             if entities != 'all':
                 temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entities]
+            if not temp_scripts:
+                print('No scripts created')
+                return
             for ts in temp_scripts:
                 print(f'Converting {pathlib.Path(ts).name}')
                 st = os.stat(ts)
@@ -171,6 +174,7 @@ class Converter:
             print('Set bids output directory first (set_bids_path)')
             return
 
+        script_path = pathlib.Path(script_path)
         if not script_path.exists():
             script_path.mkdir(parents=True)
 
@@ -378,14 +382,16 @@ class Converter:
                 command.append('        mv ${filename} ${newname}')
                 command.append('      done')
 
+            if entity.datatype == 'dwi':
+                command.append('\n#   rename bvecs and bvals files')
+                command.append('      for filename in ${output_file}.bv*; do')
+                command.append('        mv $filename ${filename//dwi.}')
+                command.append('      done')
+
             command.append('    done')
             command.append('  fi')
 
-        if entity.datatype == 'dwi':
-            command.append('\n#   rename bvecs and bvals files')
-            command.append(f'    for x in ${{bids_path}}/{output_dir}/*dwi.bv*')
-            command.append('      do mv $x ${x//dwi.}')
-            command.append('  done')
+
 
         return command
 
