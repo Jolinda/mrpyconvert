@@ -247,6 +247,8 @@ class Converter:
                 for extra_command in additional_commands:
                     command.append(extra_command)
 
+            command.append('\n')
+
             command.append(f'dicom_path={dicom_path.resolve()}')
             command.append(f'bids_path={self.bids_path.resolve()}')
             command.append('names=({})'.format(' '.join(names)))
@@ -275,10 +277,14 @@ class Converter:
                 if any(runs):
                     command.append('  run=${runs[$i]}')
 
-            command.extend(self.generate_commands(entity))
+            convert_commands = self.generate_commands(entity)
 
             if not slurm:
-                command.append('done')
+                # make it pretty
+                convert_commands = ['  ' + x for x in convert_commands]
+                convert_commands.append('done')
+
+            command.extend(convert_commands)
 
             script_name = pathlib.Path(script_path) / (script_name + script_ext)
 
@@ -347,49 +353,43 @@ class Converter:
             output_dir = subj_dir / entity.datatype
 
         format_string = entity.get_format_string()
-        command.append(f'  mkdir --parents "${{bids_path}}/{output_dir}"')
+        command.append(f'mkdir --parents "${{bids_path}}/{output_dir}"')
         command.append(
-            f'  dcmoutput=$(dcm2niix -ba n -l o -o "${{bids_path}}/{output_dir}" -f "{format_string}" {dcm2niix_flags} '
+            f'dcmoutput=$(dcm2niix -ba n -l o -o "${{bids_path}}/{output_dir}" -f "{format_string}" {dcm2niix_flags} '
             '${dicom_path}/${input_dir})')
-        command.append('  echo "${dcmoutput}"')
+        command.append('echo "${dcmoutput}"')
 
-        if entity.json_entries or (entity.datatype == 'fmap' and entity.suffix == 'auto'):
+        if entity.json_entries or (entity.datatype == 'fmap' and entity.suffix == 'auto') :
             command.append('\n  # get names of converted files')
-            command.append('  if grep -q Convert <<< ${dcmoutput}; then ')
-            command.append('    tmparray=($(echo "${dcmoutput}" | grep Convert ))')
-            command.append('    output_files=()')
-            command.append('    for ((i=4; i<${#tmparray[@]}; i+=6)); do output_files+=("${tmparray[$i]}"); done')
-            command.append('    for output_file in ${output_files[@]}; do')
+            command.append('if grep -q Convert <<< ${dcmoutput}; then ')
+            command.append('  tmparray=($(echo "${dcmoutput}" | grep Convert ))')
+            command.append('  output_files=()')
+            command.append('  for ((i=4; i<${#tmparray[@]}; i+=6)); do output_files+=("${tmparray[$i]}"); done')
+            command.append('  for output_file in ${output_files[@]}; do')
 
             if entity.json_entries:
-                jq_command = '      jq \''
+                jq_command = '    jq \''
                 jq_command += '|'.join([f'.{k} = "{v}"' for k, v in entity.json_entries.items()])
                 jq_command += '\' ${output_file}.json > ${output_file}.tmp '
                 command.append('\n      # add fields to json file(s)')
                 command.append(jq_command)
-                command.append('      mv ${output_file}.tmp ${output_file}.json')
+                command.append('    mv ${output_file}.tmp ${output_file}.json')
 
             if entity.datatype == 'fmap' and entity.suffix == 'auto':
-                command.append('\n#   rename fieldmap file(s)')
-                command.append('      for filename in ${output_file}*; do')
-                command.append('        newname=${output_file}')
-                command.append('        if [[ ${filename} =~ "auto_e1" ]]; then')
-                command.append('          newname=$(echo ${filename}|sed "s:auto_e1:magnitude1:g"); fi')
-                command.append('        if [[ ${filename} =~ "auto_e2" ]]; then')
-                command.append('          newname=$(echo ${filename}|sed "s:auto_e2:magnitude2:g"); fi')
-                command.append('        if [[ ${filename} =~ "auto_e2_ph" ]]; then')
-                command.append('          newname=$(echo ${filename}|sed "s:auto_e2_ph:phasediff:g"); fi')
-                command.append('        mv ${filename} ${newname}')
-                command.append('      done')
+                command.append('\n# rename fieldmap file(s)')
+                command.append('    for filename in ${output_file}*; do')
+                command.append('      newname=${output_file}')
+                command.append('      if [[ ${filename} =~ "auto_e1" ]]; then')
+                command.append('        newname=$(echo ${filename}|sed "s:auto_e1:magnitude1:g"); fi')
+                command.append('      if [[ ${filename} =~ "auto_e2" ]]; then')
+                command.append('        newname=$(echo ${filename}|sed "s:auto_e2:magnitude2:g"); fi')
+                command.append('      if [[ ${filename} =~ "auto_e2_ph" ]]; then')
+                command.append('        newname=$(echo ${filename}|sed "s:auto_e2_ph:phasediff:g"); fi')
+                command.append('      mv ${filename} ${newname}')
+                command.append('    done')
 
-            if entity.datatype == 'dwi':
-                command.append('\n#   rename bvecs and bvals files')
-                command.append('      for filename in ${output_file}.bv*; do')
-                command.append('        mv $filename ${filename//dwi.}')
-                command.append('      done')
-
-            command.append('    done')
-            command.append('  fi')
+            command.append('  done')
+            command.append('fi')
 
 
 
