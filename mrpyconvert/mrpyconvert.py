@@ -6,10 +6,12 @@ import itertools
 import stat
 import tempfile
 import subprocess
-
 import pydicom
+from collections import namedtuple
+import importlib.metadata
+import csv
 
-# todo: a preview function?
+__version__ = importlib.metadata.version('mrpyconvert')
 
 # BIDS VERSION: 1.8.0
 # valid datatype information
@@ -83,6 +85,8 @@ class Series:
             self.date = example_dicom.StudyDate
             self.session = session
             self.image_type = example_dicom.ImageType
+            self.subject_sex = example_dicom.PatientSex
+            self.subject_age = int(example_dicom.PatientAge[:-1])
             self.has_dicoms = True
         else:
             self.has_dicoms = False
@@ -391,9 +395,49 @@ class Converter:
             command.append('  done')
             command.append('fi')
 
-
-
         return command
+
+    def write_description_file(self, json_entries={}, filename='dataset_description.json'):
+        if not self.bids_path:
+            print('Define bids path first')
+            return
+        if not self.bids_path.exists():
+            self.bids_path.mkdir(parents=True)
+        description_file = self.bids_path / filename
+
+        # get dcm2niix version
+        p = subprocess.run(['dcm2niix', '-v'], stdout=subprocess.PIPE, universal_newlines=True)
+        dcm2niix_version = p.stdout.split()[-1][1:]
+
+        if 'BIDSVersion' not in json_entries:
+            json_entries['BIDSVersion'] = '1.8.0'
+        json_entries["GeneratedBy"]=[{"Name": "dcm2niix", "version": dcm2niix_version},
+                                     {"Name": "mrpyconvert", "version": __version__}]
+
+        print(description_file)
+        with open(description_file, 'w') as f:
+            json.dump(json_entries, f)
+
+    def write_participants_file(self, filename='participants.tsv'):
+        if not self.bids_path:
+            print('Define bids path first')
+            return
+        if not self.bids_path.exists():
+            self.bids_path.mkdir(parents=True)
+
+        if not filename[-4:] == '.tsv':
+            filename = filename + '.tsv'
+        parts_tsv = self.bids_path / filename
+        parts_json = self.bids_path / filename.replace('.tsv', '.json')
+        fields = ['participent_id', 'sex', 'age']
+        Participant = namedtuple('Participant', fields)
+        parts = {Participant(s.subject, s.subject_sex, s.subject_age) for s in self.series}
+        print(parts_tsv)
+        with open(parts_tsv, 'w') as f:
+            writer = csv.DictWriter(f, fields, dialect='excel-tab')
+            writer.writeheader()
+            for part in parts:
+                writer.writerow(part._asdict())
 
 
 def amend_phasediffs(bids_path):

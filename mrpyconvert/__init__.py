@@ -1,1 +1,2 @@
-from mrpyconvert.mrpyconvert import Converter
+from .mrpyconvert import Converter
+from .mrpyconvert import __version__
