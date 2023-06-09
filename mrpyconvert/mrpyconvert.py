@@ -409,6 +409,10 @@ class Converter:
             self.bids_path.mkdir(parents=True)
         description_file = self.bids_path / filename
 
+        # get name from directory name if not given in json_fields
+        if 'Name' not in json_fields:
+            json_fields['Name'] = self.bids_path.name
+
         # get dcm2niix version
         p = subprocess.run(['dcm2niix', '-v'], stdout=subprocess.PIPE, universal_newlines=True)
         dcm2niix_version = p.stdout.split()[-1][1:]
