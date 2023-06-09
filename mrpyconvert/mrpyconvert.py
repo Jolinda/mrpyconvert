@@ -104,7 +104,7 @@ class Converter:
         self.autosession = None
         self.bids_path = None
         self.series = []
-        self.entities = {}
+        self.entries = {}
 
     def add_dicoms(self, dicom_path, subject=None, session=None):
         series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
@@ -161,14 +161,14 @@ class Converter:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
 
-    def convert(self, entities='all', additional_commands=None):
+    def convert(self, entries='all', additional_commands=None):
         if not self.bids_path:
             print('Set bids output directory first (set_bids_path)')
             return
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_scripts = self.generate_scripts(script_path=tmpdir, additional_commands=additional_commands)
-            if entities != 'all':
-                temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entities]
+            if entries != 'all':
+                temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entries]
             if not temp_scripts:
                 print('No scripts created')
                 return
@@ -207,8 +207,8 @@ class Converter:
             return
 
         # there will be a command list/slurm file for each series
-        for e in self.entities:
-            entity = self.entities[e]
+        for e in self.entries:
+            entity = self.entries[e]
             if script_prefix:
                 script_name = script_prefix + '-' + entity.description
             else:
@@ -307,11 +307,11 @@ class Converter:
 
     def set_autosession(self, autosession = True):
         self.autosession = autosession
-        for e in self.entities:
+        for e in self.entries:
             if autosession:
-                self.entities[e].chain['ses'] = '${session}'
+                self.entries[e].chain['ses'] = '${session}'
             else:
-                del self.entities[e].chain['ses']
+                del self.entries[e].chain['ses']
 
     def add_entry(self, name, datatype, suffix, chain: dict = None, search=None,
                   json_fields=None, nonstandard=False, index=None, autorun=False):
@@ -339,15 +339,15 @@ class Converter:
                 error_string += 'Allowed suffixes are {}'.format(suffixes[datatype])
                 raise ValueError(error_string)
 
-        self.entities[name] = Entry(description=name,
-                                    index=index,
-                                    datatype=datatype,
-                                    suffix=suffix,
-                                    nonstandard=nonstandard,
-                                    chain=chain,
-                                    search=search,
-                                    json_fields=json_fields,
-                                    autorun=autorun)
+        self.entries[name] = Entry(description=name,
+                                   index=index,
+                                   datatype=datatype,
+                                   suffix=suffix,
+                                   nonstandard=nonstandard,
+                                   chain=chain,
+                                   search=search,
+                                   json_fields=json_fields,
+                                   autorun=autorun)
 
     def generate_commands(self, entity: Entry, dcm2niix_flags=''):
         command = []
