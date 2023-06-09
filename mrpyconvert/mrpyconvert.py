@@ -24,8 +24,8 @@ __version__ = importlib_metadata.version('mrpyconvert')
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
 
 # the order here determines the order in output filenames
-entities = ['acq', 'ce', 'chunk', 'dir', 'echo', 'flip', 'hemi', 'inv', 'mod', 'mt', 'part', 'proc', 'rec', 'recording',
-            'sample', 'ses', 'space', 'split', 'stain', 'task', 'trc', 'run']
+entities = ['ses', 'acq', 'ce', 'chunk', 'dir', 'echo', 'flip', 'hemi', 'inv', 'mod', 'mt', 'part', 'proc', 'rec',
+            'recording', 'sample','space', 'split', 'stain', 'task', 'trc', 'run']
 
 
 # valid suffixes for datatypes
