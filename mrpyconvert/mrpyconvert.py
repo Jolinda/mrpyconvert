@@ -439,7 +439,7 @@ class Converter:
         parts_json = self.bids_path / filename.replace('.tsv', '.json')
         fields = ['participant_id', 'sex', 'age']
         Participant = namedtuple('Participant', fields)
-        parts = {Participant(s.subject, s.subject_sex, s.subject_age) for s in self.series}
+        parts = {Participant(f'sub-{s.subject}', s.subject_sex, s.subject_age) for s in self.series}
         print(parts_tsv)
         with open(parts_tsv, 'w') as f:
             writer = csv.DictWriter(f, fields, dialect='excel-tab')
@@ -452,19 +452,19 @@ class Converter:
         with open(parts_json, 'w') as f:
             json.dump(j, f)
 
-def amend_phasediffs(bids_path):
-    phasediff_jsons = pathlib.Path(bids_path).rglob('*phasediff*.json')
-    for pdfile in phasediff_jsons:
-        print(pdfile)
-        e1file = pdfile.parent / pdfile.name.replace('phasediff', 'magnitude1')
-        if e1file.exists():
-            with open(e1file, 'r') as e1f, open(pdfile, 'r+') as pdf:
-                pdj = json.load(pdf)
-                e1j = json.load(e1f)
-                pdj['EchoTime1'] = e1j['EchoTime']
-                pdj['EchoTime2'] = pdj['EchoTime']
-                pdf.seek(0)
-                json.dump(pdj, pdf, indent=4)
+    def amend_phasediffs(self):
+        phasediff_jsons = pathlib.Path(self.bids_path).rglob('*phasediff*.json')
+        for pdfile in phasediff_jsons:
+            print(pdfile)
+            e1file = pdfile.parent / pdfile.name.replace('phasediff', 'magnitude1')
+            if e1file.exists():
+                with open(e1file, 'r') as e1f, open(pdfile, 'r+') as pdf:
+                    pdj = json.load(pdf)
+                    e1j = json.load(e1f)
+                    pdj['EchoTime1'] = e1j['EchoTime']
+                    pdj['EchoTime2'] = pdj['EchoTime']
+                    pdf.seek(0)
+                    json.dump(pdj, pdf, indent=4)
 
-        else:
-            print(f"can't find {e1file}")
+            else:
+                print(f"can't find {e1file}")
