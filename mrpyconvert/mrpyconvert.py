@@ -8,10 +8,16 @@ import tempfile
 import subprocess
 import pydicom
 from collections import namedtuple
-import importlib.metadata
 import csv
 
-__version__ = importlib.metadata.version('mrpyconvert')
+import platform
+from packaging import version
+if version.parse(platform.python_version()) < version.parse('3.8'):
+    import importlib_metadata
+else:
+    import importlib.metadata as importlib_metadata
+
+__version__ = importlib_metadata.version('mrpyconvert')
 
 # BIDS VERSION: 1.8.0
 # valid datatype information
