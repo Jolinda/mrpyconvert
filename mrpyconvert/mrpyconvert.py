@@ -314,7 +314,7 @@ class Converter:
                 del self.entities[e].chain['ses']
 
     def add_entry(self, name, datatype, suffix, chain: dict = None, search=None,
-                  json_entries=None, nonstandard=False, index=None, autorun=False):
+                  json_fields=None, nonstandard=False, index=None, autorun=False):
         if not chain:
             chain = {}
 
@@ -324,8 +324,8 @@ class Converter:
         if autorun and 'run' not in chain:
             chain['run'] = '${run}'
 
-        if not json_entries:
-            json_entries = {}
+        if not json_fields:
+            json_fields = {}
 
         if not search:
             search = name
@@ -346,7 +346,7 @@ class Converter:
                                     nonstandard=nonstandard,
                                     chain=chain,
                                     search=search,
-                                    json_fields=json_entries,
+                                    json_fields=json_fields,
                                     autorun=autorun)
 
     def generate_commands(self, entity: Entry, dcm2niix_flags=''):
@@ -401,7 +401,7 @@ class Converter:
 
         return command
 
-    def write_description_file(self, json_entries={}, filename='dataset_description.json'):
+    def write_description_file(self, json_fields={}, filename='dataset_description.json'):
         if not self.bids_path:
             print('Define bids path first')
             return
@@ -413,14 +413,14 @@ class Converter:
         p = subprocess.run(['dcm2niix', '-v'], stdout=subprocess.PIPE, universal_newlines=True)
         dcm2niix_version = p.stdout.split()[-1][1:]
 
-        if 'BIDSVersion' not in json_entries:
-            json_entries['BIDSVersion'] = '1.8.0'
-        json_entries["GeneratedBy"]=[{"Name": "dcm2niix", "version": dcm2niix_version},
-                                     {"Name": "mrpyconvert", "version": __version__}]
+        if 'BIDSVersion' not in json_fields:
+            json_fields['BIDSVersion'] = '1.8.0'
+        json_fields["GeneratedBy"]=[{"Name": "dcm2niix", "version": dcm2niix_version},
+                                    {"Name": "mrpyconvert", "version": __version__}]
 
         print(description_file)
         with open(description_file, 'w') as f:
-            json.dump(json_entries, f)
+            json.dump(json_fields, f)
 
     def write_participants_file(self, filename='participants.tsv'):
         if not self.bids_path:
