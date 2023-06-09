@@ -17,8 +17,9 @@ __version__ = importlib.metadata.version('mrpyconvert')
 # valid datatype information
 datatypes = ['anat', 'func', 'dwi', 'fmap', 'meg', 'eeg', 'ieeg', 'beh']
 
+# the order here determines the order in output filenames
 entities = ['acq', 'ce', 'chunk', 'dir', 'echo', 'flip', 'hemi', 'inv', 'mod', 'mt', 'part', 'proc', 'rec', 'recording',
-            'run', 'sample', 'ses', 'space', 'split', 'stain', 'task', 'trc']
+            'sample', 'ses', 'space', 'split', 'stain', 'task', 'trc', 'run']
 
 
 # valid suffixes for datatypes
@@ -44,14 +45,14 @@ def read_dicom(filename):
     return dcm
 
 
-class Entity:
-    def __init__(self, description: str, index: int, chain: dict, json_entries: dict,
+class Entry:
+    def __init__(self, description: str, index: int, chain: dict, json_fields: dict,
                  nonstandard: bool, suffix: str, datatype: str, search: str, autorun: bool):
         self.description = description
         self.index = index
         self.chain = chain
         self.search = search
-        self.json_entries = json_entries
+        self.json_fields = json_fields
         self.datatype = datatype
         self.suffix = suffix
         self.nonstandard = nonstandard
@@ -154,12 +155,12 @@ class Converter:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
 
-    def convert(self, entities='all'):
+    def convert(self, entities='all', additional_commands=None):
         if not self.bids_path:
             print('Set bids output directory first (set_bids_path)')
             return
         with tempfile.TemporaryDirectory() as tmpdir:
-            temp_scripts = self.generate_scripts(script_path=tmpdir)
+            temp_scripts = self.generate_scripts(script_path=tmpdir, additional_commands=additional_commands)
             if entities != 'all':
                 temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entities]
             if not temp_scripts:
@@ -198,9 +199,6 @@ class Converter:
         if not self.series:
             print('Nothing to convert')
             return
-
-        # if we don't write the description or participants file, we don't need this here
-        # self.bids_path.mkdir(exist_ok=True, parents=True)
 
         # there will be a command list/slurm file for each series
         for e in self.entities:
@@ -309,8 +307,8 @@ class Converter:
             else:
                 del self.entities[e].chain['ses']
 
-    def add_entity(self, name, datatype, suffix, chain: dict = None, search=None,
-                   json_entries=None, nonstandard=False, index=None, autorun=False):
+    def add_entry(self, name, datatype, suffix, chain: dict = None, search=None,
+                  json_entries=None, nonstandard=False, index=None, autorun=False):
         if not chain:
             chain = {}
 
@@ -335,17 +333,17 @@ class Converter:
                 error_string += 'Allowed suffixes are {}'.format(suffixes[datatype])
                 raise ValueError(error_string)
 
-        self.entities[name] = Entity(description=name,
+        self.entities[name] = Entry(description=name,
                                     index=index,
                                     datatype=datatype,
                                     suffix=suffix,
                                     nonstandard=nonstandard,
                                     chain=chain,
                                     search=search,
-                                    json_entries=json_entries,
+                                    json_fields=json_entries,
                                     autorun=autorun)
 
-    def generate_commands(self, entity: Entity, dcm2niix_flags=''):
+    def generate_commands(self, entity: Entry, dcm2niix_flags=''):
         command = []
         subj_dir = pathlib.Path('sub-${name}')
 
@@ -363,24 +361,24 @@ class Converter:
             '${dicom_path}/${input_dir})')
         command.append('echo "${dcmoutput}"')
 
-        if entity.json_entries or (entity.datatype == 'fmap' and entity.suffix == 'auto') :
-            command.append('\n  # get names of converted files')
+        if entity.json_fields or (entity.datatype == 'fmap' and entity.suffix == 'auto') :
+            command.append('\n# get names of converted files')
             command.append('if grep -q Convert <<< ${dcmoutput}; then ')
             command.append('  tmparray=($(echo "${dcmoutput}" | grep Convert ))')
             command.append('  output_files=()')
             command.append('  for ((i=4; i<${#tmparray[@]}; i+=6)); do output_files+=("${tmparray[$i]}"); done')
             command.append('  for output_file in ${output_files[@]}; do')
 
-            if entity.json_entries:
+            if entity.json_fields:
                 jq_command = '    jq \''
-                jq_command += '|'.join([f'.{k} = "{v}"' for k, v in entity.json_entries.items()])
+                jq_command += '|'.join([f'.{k} = "{v}"' for k, v in entity.json_fields.items()])
                 jq_command += '\' ${output_file}.json > ${output_file}.tmp '
-                command.append('\n      # add fields to json file(s)')
+                command.append('    # add fields to json file(s)')
                 command.append(jq_command)
                 command.append('    mv ${output_file}.tmp ${output_file}.json')
 
             if entity.datatype == 'fmap' and entity.suffix == 'auto':
-                command.append('\n# rename fieldmap file(s)')
+                command.append('    # rename fieldmap file(s)')
                 command.append('    for filename in ${output_file}*; do')
                 command.append('      newname=${output_file}')
                 command.append('      if [[ ${filename} =~ "auto_e1" ]]; then')
@@ -429,7 +427,7 @@ class Converter:
             filename = filename + '.tsv'
         parts_tsv = self.bids_path / filename
         parts_json = self.bids_path / filename.replace('.tsv', '.json')
-        fields = ['participent_id', 'sex', 'age']
+        fields = ['participant_id', 'sex', 'age']
         Participant = namedtuple('Participant', fields)
         parts = {Participant(s.subject, s.subject_sex, s.subject_age) for s in self.series}
         print(parts_tsv)
@@ -438,7 +436,11 @@ class Converter:
             writer.writeheader()
             for part in parts:
                 writer.writerow(part._asdict())
-
+        print(parts_json)
+        j = {'age': {'Description': 'age of participant', 'Units': 'years'},
+             'sex': {'Description': 'sex of participant', 'Levels': {'M':'male', 'F':'female', 'O':'other'}}}
+        with open(parts_json, 'w') as f:
+            json.dump(j, f)
 
 def amend_phasediffs(bids_path):
     phasediff_jsons = pathlib.Path(bids_path).rglob('*phasediff*.json')
