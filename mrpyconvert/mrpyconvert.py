@@ -452,6 +452,7 @@ class Converter:
         with open(parts_json, 'w') as f:
             json.dump(j, f)
 
+    ## NO LONGER NEEDED WITH NEWER DCM2NIIX
     def amend_phasediffs(self):
         phasediff_jsons = pathlib.Path(self.bids_path).rglob('*phasediff*.json')
         for pdfile in phasediff_jsons:
