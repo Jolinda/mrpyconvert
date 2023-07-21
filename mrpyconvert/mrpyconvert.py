@@ -161,6 +161,11 @@ class Converter:
             if series.orig_subject in bids_names:
                 series.subject = bids_names[series.orig_subject]
 
+    def set_sessions(self, bids_sessions: dict):
+        for series in self.series:
+            if series.orig_subject in bids_sessions:
+                series.session = bids_sessions[series.orig_subject]
+
     def convert(self, entries='all', additional_commands=None):
         if not self.bids_path:
             print('Set bids output directory first (set_bids_path)')
