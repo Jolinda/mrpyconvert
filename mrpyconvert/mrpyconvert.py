@@ -214,8 +214,9 @@ class Converter:
         # end block
 
         # there will be a command list/slurm file for each series
-        for e in self.entries:
-            entity = self.entries[e]
+        #for e in self.entries:
+        #    entity = self.entries[e]
+        for entity in self.entries.values():
             if script_prefix:
                 script_name = script_prefix + '-' + entity.description
             else:
@@ -510,65 +511,91 @@ class Converter:
         # a lot of this is also similar and could probably be cleaned up
         all_subjects = {x.subject for x in self.series}
         for subject in all_subjects:
-            print(subject)
             if script_prefix:
                 script_name = script_prefix + '-' + subject
             else:
                 script_name = subject
 
-            # currently not used
-            series_by_subject = [s for s in self.series if s.subject == subject]
-            print([s.series_description for s in series_by_subject])
-
-            # TODO: I don't think we need to organize by keys, just by series
-            # Do need to figure out the run numbers though.
-            stc_by_key = {}
-            runs_by_key = {}
-            for key, entity in self.entries.items():
-                #entity = self.entries[key]
-                series_to_consider = [s for s in self.series if re.fullmatch(entity.search, s.series_description)
-                                      and s.subject == subject]
-                series_to_consider = sorted(series_to_consider, key=lambda x: (x.study_uid, x.series_number))
-                series_to_convert = []
-                if entity.index:
-                    for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                        # if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
-                        m = next((x for i, x in enumerate(g) if i + 1 == entity.index), None)
-                        if m: series_to_convert.append(m)
-                else:
-                    series_to_convert = series_to_consider
-
-                stc_by_key[key] = series_to_convert
-                runs = []
-                if entity.autorun:
-                    for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                        runs.extend([i + 1 for i, s in enumerate(g)])
-                runs_by_key[key] = runs
-
-            print([s for s in stc_by_key])
-            for s in stc_by_key:
-                print(s)
-                print([x.series_description for x in stc_by_key[s]])
-                if s in runs_by_key:
-                    print(runs_by_key[s])
-
-            series_to_convert = stc_by_key.values() # need to unpack all the lists this won't work
             # get longest common path
-            mpl = min(len(s.path.parents) for s in series_to_convert)
+            ss_path = [s for s in self.series if s.subject == subject]
+            mpl = min(len(s.path.parents) for s in ss_path)
             dicom_path = pathlib.Path().root
             for n in range(0, mpl):
-                common_parents = {s.path.parents[n] for s in series_to_convert}
+                common_parents = {s.path.parents[n] for s in ss_path}
                 if len(common_parents) == 1:
                     dicom_path = next(iter(common_parents))
                     break
-            # I had purepath here but I don't think it's needed?
-            paths = [str(pathlib.Path(s.path).relative_to(dicom_path)) for s in series_to_convert]
+
             command = ['#!/bin/bash\n']
             if slurm:
                 command.append(f'#SBATCH --job-name={script_name}')
-                command.append(f'#SBATCH --array=0-{len(series_to_convert) - 1}')
+
             if additional_commands:
                 for extra_command in additional_commands:
                     command.append(extra_command)
 
-        return None
+            command.append(f'dicom_path={dicom_path.resolve()}')
+            command.append(f'bids_path={self.bids_path.resolve()}')
+            command.append(f'name={subject}')
+
+            for key, entity in self.entries.items():
+                series_to_convert = []
+                series_to_consider = [s for s in self.series if re.fullmatch(entity.search, s.series_description)
+                                      and s.subject == subject]
+                series_to_consider = sorted(series_to_consider, key=lambda x: (x.study_uid, x.series_number))
+
+                if entity.index:
+                    for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
+                        # if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.extend(m)
+                        m = next((x for i, x in enumerate(g) if i + 1 == entity.index), None)
+                        if m: series_to_convert.extend(m)
+                else:
+                    series_to_convert.extend(series_to_consider)
+
+                runs = []
+                if entity.autorun:
+                    for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
+                        runs.extend([i + 1 for i, s in enumerate(g)])
+
+                sessions = [s.session for s in series_to_convert]
+                convert_commands = self.generate_commands(entity)
+                paths = [str(pathlib.Path(s.path).relative_to(dicom_path)) for s in series_to_convert]
+                for i, p in enumerate(paths):
+                    command.append('\n')
+                    command.append('input_dir="{}"'.format(p))
+                    if runs:
+                        command.append(f'run={runs[i]}')
+                    if any(sessions):
+                        command.append(f'session={sessions[i]}')
+                    command.extend(convert_commands)
+
+
+                # if slurm:
+                #     command.append('name=${names[$SLURM_ARRAY_TASK_ID]}')
+                #     command.append('input_dir=${input_dirs[$SLURM_ARRAY_TASK_ID]}')
+                #     if any(sessions):
+                #         command.append('session=${sessions[$SLURM_ARRAY_TASK_ID]}')
+                #     if any(runs):
+                #         command.append('run=${runs[$SLURM_ARRAY_TASK_ID]}')
+                # else:
+                #     command.append('for i in "${!names[@]}"; do')
+                #     command.append('  name=${names[$i]}')
+                #     command.append('  input_dir=${input_dirs[$i]}')
+                #     if any(sessions):
+                #         command.append('  session=${sessions[$i]}')
+                #     if any(runs):
+                #         command.append('  run=${runs[$i]}')
+
+                script_filename = pathlib.Path(script_path) / (script_name + script_ext)
+                #print(script_filename)
+                #for line in command:
+                #    print(line)
+
+                with open(script_filename, 'w') as f:
+                    for line in command:
+                        f.write(line)
+                        f.write('\n')
+
+                script_names.append(script_filename)
+
+        return script_names
