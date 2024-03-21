@@ -186,6 +186,7 @@ class Converter:
     def generate_scripts(self, script_ext='', script_path=os.getcwd(), slurm=False,
                          additional_commands=None, script_prefix=None):
 
+        # TODO this block is the same in the other generate_scripts function, pull out
         if not self.bids_path:
             print('Set bids output directory first (set_bids_path)')
             return
@@ -210,6 +211,7 @@ class Converter:
         if not self.series:
             print('Nothing to convert')
             return
+        # end block
 
         # there will be a command list/slurm file for each series
         for e in self.entries:
@@ -474,3 +476,99 @@ class Converter:
 
             else:
                 print(f"can't find {e1file}")
+
+
+    def generate_scripts_by_subject(self, script_ext='', script_path=os.getcwd(), slurm=False,
+                                    additional_commands=None, script_prefix=None):
+        # an attempt to make scripts that are organized by subject instead of by series
+        # TODO: this block is the same as the other generate_scripts, should pull out
+        if not self.bids_path:
+            print('Set bids output directory first (set_bids_path)')
+            return
+
+        script_path = pathlib.Path(script_path)
+        if not script_path.exists():
+            script_path.mkdir(parents=True)
+
+        script_names = []
+        # assign session numbers to series objects using dates
+        if self.autosession:
+            all_subjects = {x.subject for x in self.series}
+            for subject in all_subjects:
+                s_series = [s for s in self.series if s.subject == subject]
+                s_series.sort(key=lambda x: (x.date, x.study_uid))
+                # get unique values, preserving order
+                studies = list(dict.fromkeys(s.study_uid for s in s_series))
+                for s in s_series:
+                    s.session = studies.index(s.study_uid) + 1
+
+        if not self.series:
+            print('Nothing to convert')
+            return
+        # end block
+
+        # a lot of this is also similar and could probably be cleaned up
+        all_subjects = {x.subject for x in self.series}
+        for subject in all_subjects:
+            print(subject)
+            if script_prefix:
+                script_name = script_prefix + '-' + subject
+            else:
+                script_name = subject
+
+            # currently not used
+            series_by_subject = [s for s in self.series if s.subject == subject]
+            print([s.series_description for s in series_by_subject])
+
+            # TODO: I don't think we need to organize by keys, just by series
+            # Do need to figure out the run numbers though.
+            stc_by_key = {}
+            runs_by_key = {}
+            for key, entity in self.entries.items():
+                #entity = self.entries[key]
+                series_to_consider = [s for s in self.series if re.fullmatch(entity.search, s.series_description)
+                                      and s.subject == subject]
+                series_to_consider = sorted(series_to_consider, key=lambda x: (x.study_uid, x.series_number))
+                series_to_convert = []
+                if entity.index:
+                    for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
+                        # if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
+                        m = next((x for i, x in enumerate(g) if i + 1 == entity.index), None)
+                        if m: series_to_convert.append(m)
+                else:
+                    series_to_convert = series_to_consider
+
+                stc_by_key[key] = series_to_convert
+                runs = []
+                if entity.autorun:
+                    for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
+                        runs.extend([i + 1 for i, s in enumerate(g)])
+                runs_by_key[key] = runs
+
+            print([s for s in stc_by_key])
+            for s in stc_by_key:
+                print(s)
+                print([x.series_description for x in stc_by_key[s]])
+                if s in runs_by_key:
+                    print(runs_by_key[s])
+
+            series_to_convert = stc_by_key.values() # need to unpack all the lists this won't work
+            # get longest common path
+            mpl = min(len(s.path.parents) for s in series_to_convert)
+            dicom_path = pathlib.Path().root
+            for n in range(0, mpl):
+                common_parents = {s.path.parents[n] for s in series_to_convert}
+                if len(common_parents) == 1:
+                    dicom_path = next(iter(common_parents))
+                    break
+            # I had purepath here but I don't think it's needed?
+            paths = [str(pathlib.Path(s.path).relative_to(dicom_path)) for s in series_to_convert]
+            command = ['#!/bin/bash\n']
+            if slurm:
+                command.append(f'#SBATCH --job-name={script_name}')
+                command.append(f'#SBATCH --array=0-{len(series_to_convert) - 1}')
+            if additional_commands:
+                for extra_command in additional_commands:
+                    command.append(extra_command)
+
+        return None
