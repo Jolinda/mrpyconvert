@@ -434,6 +434,7 @@ class Converter:
         with open(description_file, 'w') as f:
             json.dump(json_fields, f)
 
+    # this will append to an existing file; however right now I'm not checking to see if the headers match up
     def write_participants_file(self, filename='participants.tsv'):
         if not self.bids_path:
             print('Define bids path first')
@@ -449,9 +450,11 @@ class Converter:
         Participant = namedtuple('Participant', fields)
         parts = {Participant(f'sub-{s.subject}', s.subject_sex, s.subject_age) for s in self.series}
         print(parts_tsv)
-        with open(parts_tsv, 'w') as f:
+        newfile = not parts_tsv.exists()
+        with open(parts_tsv, 'a') as f:
             writer = csv.DictWriter(f, fields, dialect='excel-tab')
-            writer.writeheader()
+            if newfile:
+                writer.writeheader()
             for part in parts:
                 writer.writerow(part._asdict())
         print(parts_json)

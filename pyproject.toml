@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mrpyconvert"
-version = "0.1.20"
+version = "0.1.21"
 description = "Tool to create scripts to convert dicom to bids"
 authors = ["Jolinda Smith <jolinda@uoregon.edu>"]
 license = "MIT"
