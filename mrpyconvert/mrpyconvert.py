@@ -569,23 +569,6 @@ class Converter:
                         command.append(f'session={sessions[i]}')
                     command.extend(convert_commands)
 
-
-                # if slurm:
-                #     command.append('name=${names[$SLURM_ARRAY_TASK_ID]}')
-                #     command.append('input_dir=${input_dirs[$SLURM_ARRAY_TASK_ID]}')
-                #     if any(sessions):
-                #         command.append('session=${sessions[$SLURM_ARRAY_TASK_ID]}')
-                #     if any(runs):
-                #         command.append('run=${runs[$SLURM_ARRAY_TASK_ID]}')
-                # else:
-                #     command.append('for i in "${!names[@]}"; do')
-                #     command.append('  name=${names[$i]}')
-                #     command.append('  input_dir=${input_dirs[$i]}')
-                #     if any(sessions):
-                #         command.append('  session=${sessions[$i]}')
-                #     if any(runs):
-                #         command.append('  run=${runs[$i]}')
-
                 script_filename = pathlib.Path(script_path) / (script_name + script_ext)
                 #print(script_filename)
                 #for line in command:
