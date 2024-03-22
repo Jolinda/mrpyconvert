@@ -569,16 +569,16 @@ class Converter:
                         command.append(f'session={sessions[i]}')
                     command.extend(convert_commands)
 
-                script_filename = pathlib.Path(script_path) / (script_name + script_ext)
-                #print(script_filename)
-                #for line in command:
-                #    print(line)
+            script_filename = pathlib.Path(script_path) / (script_name + script_ext)
+            #print(script_filename)
+            #for line in command:
+            #    print(line)
 
-                with open(script_filename, 'w') as f:
-                    for line in command:
-                        f.write(line)
-                        f.write('\n')
+            with open(script_filename, 'w') as f:
+                for line in command:
+                    f.write(line)
+                    f.write('\n')
 
-                script_names.append(script_filename)
+            script_names.append(script_filename)
 
         return script_names
