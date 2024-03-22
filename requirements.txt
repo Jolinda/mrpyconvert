@@ -1,1 +1,7 @@
+<<<<<<< Updated upstream
 pydicom
+=======
+pydicom==2.3.1 ; python_version >= "3.8" and python_version < "4.0" \
+    --hash=sha256:655db29c21cb333a4f9dfffdeaa80995b1d3b89e98b66a16f5cc886e5b338028 \
+    --hash=sha256:b00bacdabc1f8a18b61a08bb6cd0f41c419446531638c895a708c22a35d69cfe
+>>>>>>> Stashed changes
