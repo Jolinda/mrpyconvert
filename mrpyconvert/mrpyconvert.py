@@ -111,7 +111,6 @@ class Converter:
         # sadly I need to support python < 3.8, no walruses allowed
         #found_series = [series for s in series_paths if (series := Series(s, subject, session)).has_dicoms]
         found_series = [Series(s, subject, session) for s in series_paths if Series(s, subject, session).has_dicoms]
-
         if not found_series:
             print('No dicoms found')
             return
@@ -205,7 +204,7 @@ class Converter:
                 # get unique values, preserving order
                 studies = list(dict.fromkeys(s.study_uid for s in s_series))
                 for s in s_series:
-                    s.session = studies.index(s.study_uid) + 1
+                    s.session = str(studies.index(s.study_uid) + 1)
 
 
         if not self.series:
@@ -370,8 +369,15 @@ class Converter:
 
         format_string = entity.get_format_string()
         command.append(f'mkdir --parents "${{bids_path}}/{output_dir}"')
+
+        # NOT anonymizing is the default, unlike default dcm2niix behavior
+        if '-ba y' not in dcm2niix_flags:
+            anon_flag = '-ba n'
+        else:
+            anon_flag = '' # it's in dcm2niix_flags, don't need it here
+
         command.append(
-            f'dcmoutput=$(dcm2niix -ba n -l o -o "${{bids_path}}/{output_dir}" -f "{format_string}" {dcm2niix_flags} '
+            f'dcmoutput=$(dcm2niix {anon_flag} -o "${{bids_path}}/{output_dir}" -f "{format_string}" {dcm2niix_flags} '
             '${dicom_path}/${input_dir})')
         command.append('echo "${dcmoutput}"')
 
