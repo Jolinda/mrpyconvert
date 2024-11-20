@@ -48,7 +48,7 @@ for file in listOfFiles:
   else:
     outdir = args.output_dir
   
-  newname = os.path.join(outdir, *study_desc, '{}_{}_{}'.format(subject, date, time), 'Series_{}_{}'.format(series_no, series_desc), 
+  newname = os.path.join(outdir, *study_desc, f'{subject}_{date}_{time}', f'Series_{series_no:02d}_{series_desc}',
                          os.path.basename(file))
 
   if args.preview:
