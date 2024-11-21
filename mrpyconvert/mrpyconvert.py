@@ -120,7 +120,7 @@ class Converter:
     def set_bids_path(self, bids_path):
         self.bids_path = pathlib.Path(bids_path)
 
-    def inspect(self, dicom_path=None, printout=True):
+    def inspect(self, dicom_path=None, verbose=False):
         if not dicom_path:
             all_series = self.series
         else:
@@ -128,7 +128,6 @@ class Converter:
                             not dirs]
             #all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
             all_series = [Series(s) for s in series_paths if Series(s).has_dicoms]
-
 
         if not all_series:
             print(f'No dicoms found in {dicom_path}')
@@ -141,7 +140,7 @@ class Converter:
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
         descriptions = {s.series_description for s in all_series}
-        if printout:
+        if verbose:
             print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
             print('Subjects: ' + ' '.join(sorted(all_subjects)))
             print('\n'.join(sorted(descriptions)))
@@ -155,7 +154,7 @@ class Converter:
                 if count > 1:
                     duplicate_flag = True
                     continue
-            if duplicate_flag and printout:
+            if duplicate_flag and verbose:
                 print(f'More than one copy of {description} for at least one study')
             infos.append(SeriesInfo(description, duplicate_flag))
         return infos
@@ -170,12 +169,15 @@ class Converter:
             if series.orig_subject in bids_sessions:
                 series.session = bids_sessions[series.orig_subject]
 
-    def convert(self, entries='all', additional_commands=None):
+    def convert(self, entries='all', additional_commands=None, by_subject=False):
         if not self.bids_path:
             print('Set bids output directory first (set_bids_path)')
             return
         with tempfile.TemporaryDirectory() as tmpdir:
-            temp_scripts = self.generate_scripts(script_path=tmpdir, additional_commands=additional_commands)
+            if by_subject:
+                temp_scripts = self.generate_scripts_by_subject(script_path=tmpdir, additional_commands=additional_commands)
+            else:
+                temp_scripts = self.generate_scripts(script_path=tmpdir, additional_commands=additional_commands)
             if entries != 'all':
                 temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entries]
             if not temp_scripts:
