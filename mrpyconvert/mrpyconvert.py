@@ -108,9 +108,7 @@ class Converter:
 
     def add_dicoms(self, dicom_path, subject=None, session=None):
         series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
-        # sadly I need to support python < 3.8, no walruses allowed
-        #found_series = [series for s in series_paths if (series := Series(s, subject, session)).has_dicoms]
-        found_series = [Series(s, subject, session) for s in series_paths if Series(s, subject, session).has_dicoms]
+        found_series = [series for s in series_paths if (series := Series(s, subject, session)).has_dicoms]
         if not found_series:
             print('No dicoms found')
             return
@@ -126,8 +124,7 @@ class Converter:
         else:
             series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if
                             not dirs]
-            #all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
-            all_series = [Series(s) for s in series_paths if Series(s).has_dicoms]
+            all_series = [series for s in series_paths if (series := Series(s)).has_dicoms]
 
         if not all_series:
             print(f'No dicoms found in {dicom_path}')
@@ -234,8 +231,6 @@ class Converter:
             series_to_convert = []
             if entity.index:
                 for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                    # this is the same thing just depends on certain python level
-                    #if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
                     m = next((x for i, x in enumerate(g) if i+1 == entity.index), None)
                     if m: series_to_convert.append(m)
             else:
@@ -563,7 +558,6 @@ class Converter:
 
                 if entity.index:
                     for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                        # if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.extend(m)
                         m = next((x for i, x in enumerate(g) if i + 1 == entity.index), None)
                         if m: series_to_convert.extend(m)
                 else:
