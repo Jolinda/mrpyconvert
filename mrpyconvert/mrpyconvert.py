@@ -187,7 +187,7 @@ class Converter:
                 subprocess.run(str(ts))
 
     def generate_scripts(self, script_ext='', script_path=os.getcwd(), slurm=False,
-                         additional_commands=None, script_prefix=None):
+                         additional_commands=None, script_prefix=None, dcm2niix_flags=''):
 
         # TODO this block is the same in the other generate_scripts function, pull out
         if not self.bids_path:
@@ -295,7 +295,7 @@ class Converter:
                 if any(runs):
                     command.append('  run=${runs[$i]}')
 
-            convert_commands = self.generate_commands(entity)
+            convert_commands = self.generate_commands(entity, dcm2niix_flags)
 
             if not slurm:
                 # make it pretty
@@ -492,7 +492,7 @@ class Converter:
 
 
     def generate_scripts_by_subject(self, script_ext='', script_path=os.getcwd(), slurm=False,
-                                    additional_commands=None, script_prefix=None):
+                                    additional_commands=None, script_prefix=None, dcm2niix_flags=''):
         # an attempt to make scripts that are organized by subject instead of by series
         # TODO: this block is the same as the other generate_scripts, should pull out
         if not self.bids_path:
@@ -569,7 +569,7 @@ class Converter:
                         runs.extend([i + 1 for i, s in enumerate(g)])
 
                 sessions = [s.session for s in series_to_convert]
-                convert_commands = self.generate_commands(entity)
+                convert_commands = self.generate_commands(entity, dcm2niix_flags)
                 paths = [str(pathlib.Path(s.path).relative_to(dicom_path)) for s in series_to_convert]
                 for i, p in enumerate(paths):
                     command.append('\n')
