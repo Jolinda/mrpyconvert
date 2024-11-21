@@ -120,7 +120,7 @@ class Converter:
     def set_bids_path(self, bids_path):
         self.bids_path = pathlib.Path(bids_path)
 
-    def inspect(self, dicom_path=None):
+    def inspect(self, dicom_path=None, printout=True):
         if not dicom_path:
             all_series = self.series
         else:
@@ -140,11 +140,13 @@ class Converter:
         n_studies = len(all_studies)
         s = 's' if n_subjects != 1 else ''
         ies = 'ies' if n_studies != 1 else 'y'
-        print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
-        print('Subjects: ' + ' '.join(sorted(all_subjects)))
         descriptions = {s.series_description for s in all_series}
-        print('\n'.join(sorted(descriptions)))
+        if printout:
+            print(f'{n_studies} stud{ies} for {n_subjects} subject{s} found.')
+            print('Subjects: ' + ' '.join(sorted(all_subjects)))
+            print('\n'.join(sorted(descriptions)))
 
+        info = dict()
         for description in descriptions:
             duplicate_flag = False
             for study in all_studies:
@@ -152,8 +154,10 @@ class Converter:
                 if count > 1:
                     duplicate_flag = True
                     continue
-            if duplicate_flag:
+            if duplicate_flag and printout:
                 print(f'More than one copy of {description} for at least one study')
+            info[description] = duplicate_flag
+        return info
 
     def set_names(self, bids_names: dict):
         for series in self.series:
@@ -227,6 +231,7 @@ class Converter:
             series_to_convert = []
             if entity.index:
                 for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
+                    # this is the same thing just depends on certain python level
                     #if m := next((x for i, x in enumerate(g) if i+1 == entity.index), None): series_to_convert.append(m)
                     m = next((x for i, x in enumerate(g) if i+1 == entity.index), None)
                     if m: series_to_convert.append(m)
