@@ -166,15 +166,18 @@ class Converter:
             if series.orig_subject in bids_sessions:
                 series.session = bids_sessions[series.orig_subject]
 
-    def convert(self, entries='all', additional_commands=None, by_subject=False):
+    def convert(self, entries='all', additional_commands=None, by_subject=False, dcm2niix_flags=''):
         if not self.bids_path:
             print('Set bids output directory first (set_bids_path)')
             return
         with tempfile.TemporaryDirectory() as tmpdir:
             if by_subject:
-                temp_scripts = self.generate_scripts_by_subject(script_path=tmpdir, additional_commands=additional_commands)
+                temp_scripts = self.generate_scripts_by_subject(script_path=tmpdir,
+                                                                additional_commands=additional_commands,
+                                                                dcm2niix_flags=dcm2niix_flags)
             else:
-                temp_scripts = self.generate_scripts(script_path=tmpdir, additional_commands=additional_commands)
+                temp_scripts = self.generate_scripts(script_path=tmpdir, additional_commands=additional_commands,
+                                                     dcm2niix_flags=dcm2niix_flags)
             if entries != 'all':
                 temp_scripts = [ts for ts in temp_scripts if pathlib.Path(ts).name in entries]
             if not temp_scripts:
