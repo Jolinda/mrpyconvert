@@ -146,7 +146,8 @@ class Converter:
             print('Subjects: ' + ' '.join(sorted(all_subjects)))
             print('\n'.join(sorted(descriptions)))
 
-        info = dict()
+        SeriesInfo = namedtuple('SeriesInfo', ['description', 'isduplicated'])
+        infos = []
         for description in descriptions:
             duplicate_flag = False
             for study in all_studies:
@@ -156,8 +157,8 @@ class Converter:
                     continue
             if duplicate_flag and printout:
                 print(f'More than one copy of {description} for at least one study')
-            info[description] = duplicate_flag
-        return info
+            infos.append(SeriesInfo(description, duplicate_flag))
+        return infos
 
     def set_names(self, bids_names: dict):
         for series in self.series:
