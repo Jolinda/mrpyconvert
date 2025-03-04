@@ -105,6 +105,7 @@ class Converter:
         self.bids_path = bids_path
         self.series = []
         self.entries = {}
+        self.session_flag = autosession
 
     def add_dicoms(self, dicom_path, subject=None, session=None):
         series_paths = [pathlib.Path(root) for root, dirs, files in os.walk(dicom_path, followlinks=True) if not dirs]
@@ -114,6 +115,8 @@ class Converter:
             return
         else:
             self.series.extend(found_series)
+            if session:
+                self.session_flag = True
 
     def set_bids_path(self, bids_path):
         self.bids_path = pathlib.Path(bids_path)
@@ -330,7 +333,7 @@ class Converter:
         if not chain:
             chain = {}
 
-        if self.autosession and 'ses' not in chain:
+        if self.session_flag and 'ses' not in chain:
             chain['ses'] = '${session}'
 
         if autorun and 'run' not in chain:

@@ -1,6 +1,6 @@
 [project]
 name = "mrpyconvert"
-version = "0.1.27"
+version = "0.1.28"
 description = "Tool to create scripts to convert dicom to bids"
 authors = [{name="Jolinda Smith", email="jolinda@uoregon.edu"}]
 license = "MIT"
