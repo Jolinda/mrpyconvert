@@ -218,7 +218,7 @@ class Converter:
 
         if not self.series:
             print('Nothing to convert')
-            return
+            return []
         # end block
 
         # there will be a command list/slurm file for each series
@@ -522,7 +522,7 @@ class Converter:
 
         if not self.series:
             print('Nothing to convert')
-            return
+            return []
         # end block
 
         # a lot of this is also similar and could probably be cleaned up
