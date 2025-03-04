@@ -2,7 +2,7 @@
 name = "mrpyconvert"
 version = "0.1.27"
 description = "Tool to create scripts to convert dicom to bids"
-authors = ["Jolinda Smith <jolinda@uoregon.edu>"]
+authors = [{name="Jolinda Smith", email="jolinda@uoregon.edu"}]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.8"
