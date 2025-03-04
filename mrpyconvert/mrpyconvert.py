@@ -213,7 +213,6 @@ class Converter:
                 for s in s_series:
                     s.session = str(studies.index(s.study_uid) + 1)
 
-
         if not self.series:
             print('Nothing to convert')
             return
