@@ -100,9 +100,9 @@ class Series:
 
 
 class Converter:
-    def __init__(self):
-        self.autosession = None
-        self.bids_path = None
+    def __init__(self, autosession=None, bids_path=None):
+        self.autosession = autosession
+        self.bids_path = bids_path
         self.series = []
         self.entries = {}
 
