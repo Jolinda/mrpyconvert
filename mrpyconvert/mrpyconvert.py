@@ -102,7 +102,10 @@ class Series:
 class Converter:
     def __init__(self, autosession=None, bids_path=None):
         self.autosession = autosession
-        self.bids_path = bids_path
+        if bids_path:
+            self.bids_path = pathlib.Path(bids_path)
+        else:
+            self.bids_path = None
         self.series = []
         self.entries = {}
         self.session_flag = autosession
