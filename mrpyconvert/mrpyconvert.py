@@ -325,13 +325,18 @@ class Converter:
 
     def set_autosession(self, autosession = True):
         self.autosession = autosession
+        # We don't want to unset the session_flag if someone calls set_autosession(false)
+        # and also has added session info
+        # This could lead to wrong behavior if someone sets then unsets autosession
+        if autosession:
+            self.session_flag=True
         for e in self.entries:
             if autosession:
                 self.entries[e].chain['ses'] = '${session}'
             else:
                 del self.entries[e].chain['ses']
 
-    def add_entry(self, name, datatype, suffix, chain: dict = None, search=None,
+    def add_entry(self, name, datatype, suffix, chain: dict=None, search=None,
                   json_fields=None, nonstandard=False, index=None, autorun=False):
         if not chain:
             chain = {}
@@ -340,7 +345,7 @@ class Converter:
             chain['ses'] = '${session}'
 
         if autorun and 'run' not in chain:
-            chain['run'] = '${run}'
+            chain['run'] = '${run:02}'
 
         if not json_fields:
             json_fields = {}
@@ -373,8 +378,8 @@ class Converter:
 
         if 'ses' in entity.chain:
             output_dir = subj_dir / 'ses-{}'.format(entity.chain['ses']) / entity.datatype
-        elif self.autosession:
-            output_dir = subj_dir / 'ses-${session}' / entity.datatype
+    #    elif self.autosession:
+    #        output_dir = subj_dir / 'ses-${session}' / entity.datatype
         else:
             output_dir = subj_dir / entity.datatype
 
@@ -392,7 +397,7 @@ class Converter:
             '${dicom_path}/${input_dir})')
         command.append('echo "${dcmoutput}"')
 
-        if entity.json_fields or (entity.datatype == 'fmap' and entity.suffix == 'auto') :
+        if entity.json_fields or (entity.datatype == 'fmap' and entity.suffix == 'auto'):
             command.append('\n# get names of converted files')
             command.append('if grep -q Convert <<< ${dcmoutput}; then ')
             command.append('  tmparray=($(echo "${dcmoutput}" | grep Convert ))')
