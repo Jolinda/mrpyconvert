@@ -247,7 +247,7 @@ class Converter:
             runs = []
             if entity.autorun:
                 for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                    runs.extend([i + 1 for i, s in enumerate(g)])
+                    runs.extend([f'{i+1:02d}' for i, s in enumerate(g)])
 
             if not series_to_convert:
                 print(f'No matching dicoms found for {entity.search}')
@@ -579,7 +579,7 @@ class Converter:
                 runs = []
                 if entity.autorun:
                     for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
-                        runs.extend([f'{i + 1:02d}' for i, s in enumerate(g)])
+                        runs.extend([f'{i+1:02d}' for i, s in enumerate(g)])
 
                 sessions = [s.session for s in series_to_convert]
                 convert_commands = self.generate_commands(entity, dcm2niix_flags)
