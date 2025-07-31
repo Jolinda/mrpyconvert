@@ -64,6 +64,7 @@ class Entry:
         self.nonstandard = nonstandard
         self.autorun = autorun
 
+
     def get_format_string(self):
         format_string = 'sub-${name}_'
         if self.chain:
@@ -97,6 +98,9 @@ class Series:
             self.has_dicoms = True
         else:
             self.has_dicoms = False
+
+    def get_n_vols(self):
+
 
 
 class Converter:
@@ -244,9 +248,11 @@ class Converter:
             else:
                 series_to_convert = series_to_consider
 
+            # This -was- series_to_consider here. I don't know why it wasn't series_to_convert but I also
+            # don't remember what 'index' is all about. But surely series_to_convert is correct.
             runs = []
             if entity.autorun:
-                for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
+                for k, g in itertools.groupby(series_to_convert, key=lambda x: x.study_uid):
                     runs.extend([f'{i+1:02d}' for i, s in enumerate(g)])
 
             if not series_to_convert:
@@ -576,9 +582,11 @@ class Converter:
                 else:
                     series_to_convert.extend(series_to_consider)
 
+                # This -was- series_to_consider here. I don't know why it wasn't series_to_convert but I also
+                # don't remember what 'index' is all about. But surely series_to_convert is correct.
                 runs = []
                 if entity.autorun:
-                    for k, g in itertools.groupby(series_to_consider, key=lambda x: x.study_uid):
+                    for k, g in itertools.groupby(series_to_convert, key=lambda x: x.study_uid):
                         runs.extend([f'{i+1:02d}' for i, s in enumerate(g)])
 
                 sessions = [s.session for s in series_to_convert]
